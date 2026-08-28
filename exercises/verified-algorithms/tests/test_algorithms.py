@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from itertools import product
+from itertools import combinations, product
 from pathlib import Path
 import random
 import sys
@@ -12,6 +12,46 @@ sys.path.insert(0, str(SRC))
 
 from verified_algorithms.ranges import prefix_sums, range_sum, lower_bound
 from verified_algorithms.trees import RedBlackNode, red_black_height
+from verified_algorithms.optimization import knapsack_01, select_intervals, lcs_length
+def brute_interval_count(intervals: list[tuple[int, int]]) -> int:
+    best = 0
+    for count in range(len(intervals) + 1):
+        for subset in combinations(intervals, count):
+            ordered = sorted(subset)
+            if all(
+                left[1] <= right[0]
+                for left, right in zip(ordered, ordered[1:])
+            ):
+                best = max(best, count)
+    return best
+
+
+def deterministic_interval_selection(
+    intervals: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    selected: list[tuple[int, int]] = []
+    last_stop: int | None = None
+    for interval in sorted(intervals, key=lambda item: (item[1], item[0])):
+        start, stop = interval
+        if last_stop is None or start >= last_stop:
+            selected.append(interval)
+            last_stop = stop
+    return selected
+
+
+def brute_knapsack(items: list[tuple[int, int]], capacity: int) -> int:
+    best = 0
+    for count in range(len(items) + 1):
+        for selected in combinations(range(len(items)), count):
+            weight = sum(items[index][0] for index in selected)
+            if weight <= capacity:
+                best = max(
+                    best,
+                    sum(items[index][1] for index in selected),
+                )
+    return best
+
+
 def valid_red_black_tree(root: object) -> tuple[bool, int | None]:
     if root is not None and root.color != "black":
         return False, None
@@ -53,6 +93,29 @@ def complete_tree(colors: tuple[str, ...]) -> object:
     nodes[2].left, nodes[2].right = nodes[1], nodes[3]
     nodes[6].left, nodes[6].right = nodes[5], nodes[7]
     return nodes[4]
+
+
+def brute_lcs_length(left: str, right: str) -> int:
+    def is_subsequence(candidate: str, text: str) -> bool:
+        position = 0
+        for character in text:
+            if position < len(candidate) and candidate[position] == character:
+                position += 1
+        return position == len(candidate)
+
+    shorter, longer = (
+        (left, right) if len(left) <= len(right) else (right, left)
+    )
+    best = 0
+    for mask in range(1 << len(shorter)):
+        candidate = "".join(
+            character
+            for index, character in enumerate(shorter)
+            if mask & (1 << index)
+        )
+        if len(candidate) > best and is_subsequence(candidate, longer):
+            best = len(candidate)
+    return best
 
 
 class DataStructureTests(unittest.TestCase):
@@ -118,6 +181,81 @@ class DataStructureTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             red_black_height(bad_order)
+
+
+class DesignTechniqueTests(unittest.TestCase):
+    def test_knapsack_matches_subset_enumeration(self) -> None:
+        source = random.Random(20250130)
+        self.assertEqual(knapsack_01([], 0), 0)
+        for _ in range(70):
+            items = [
+                (source.randrange(1, 8), source.randrange(-3, 16))
+                for _ in range(8)
+            ]
+            capacity = source.randrange(0, 20)
+            self.assertEqual(
+                knapsack_01(items, capacity),
+                brute_knapsack(items, capacity),
+            )
+
+    def test_knapsack_rejects_invalid_contract(self) -> None:
+        with self.assertRaises(ValueError):
+            knapsack_01([], -1)
+        with self.assertRaises(ValueError):
+            knapsack_01([(0, 5)], 10)
+        with self.assertRaises(ValueError):
+            knapsack_01([(-2, 5)], 10)
+
+    def test_interval_selection_matches_exhaustive_optimum(self) -> None:
+        source = random.Random(20250201)
+        specific = [(0, 100), (1, 2), (2, 3), (3, 4)]
+        self.assertEqual(len(select_intervals(specific)), 3)
+        tied = [(1, 3), (0, 3), (3, 4)]
+        self.assertEqual(
+            select_intervals(tied),
+            [(0, 3), (3, 4)],
+        )
+        for _ in range(80):
+            intervals: list[tuple[int, int]] = []
+            for _ in range(8):
+                start = source.randrange(0, 12)
+                intervals.append((start, start + source.randrange(1, 5)))
+            selected = select_intervals(intervals)
+            self.assertEqual(len(selected), brute_interval_count(intervals))
+            self.assertEqual(
+                selected,
+                deterministic_interval_selection(intervals),
+            )
+            self.assertTrue(
+                all(
+                    left[1] <= right[0]
+                    for left, right in zip(selected, selected[1:])
+                )
+            )
+
+    def test_interval_selection_rejects_invalid_ranges(self) -> None:
+        for intervals in [[(1, 1)], [(3, 2)], [(0, 1), (5, 4)]]:
+            with self.assertRaises(ValueError):
+                select_intervals(intervals)
+
+    def test_lcs_matches_subsequence_enumeration(self) -> None:
+        source = random.Random(20250205)
+        self.assertEqual(lcs_length("", ""), 0)
+        self.assertEqual(lcs_length("abc", "abc"), 3)
+        self.assertEqual(lcs_length("abc", "def"), 0)
+        for _ in range(100):
+            left = "".join(
+                source.choice("abcd")
+                for _ in range(source.randrange(9))
+            )
+            right = "".join(
+                source.choice("abcd")
+                for _ in range(source.randrange(9))
+            )
+            self.assertEqual(
+                lcs_length(left, right),
+                brute_lcs_length(left, right),
+            )
 
 
 if __name__ == "__main__":
