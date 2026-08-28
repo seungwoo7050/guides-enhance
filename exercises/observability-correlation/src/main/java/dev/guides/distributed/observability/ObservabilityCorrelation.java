@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class ObservabilityCorrelation {
     // [Implementation 1] 상관관계 식별자 정의
@@ -106,7 +107,66 @@ public final class ObservabilityCorrelation {
             );
             return event;
         }
-        public List<Observation> observations() { return List.copyOf(observations); }
+
+        // [Implementation 2-3] 중복 전달과 업무 효과 분리
+        // 같은 event ID의 재전달은 관찰하되 업무 효과는 한 번만 늘립니다.
+        public void consume(Event event) {
+            Event previous = appliedEvents.get(event.eventId());
+            if (previous != null && !previous.equals(event)) {
+                throw new IllegalArgumentException("event ID reused with different identifiers");
+            }
+            boolean first = previous == null;
+            if (first) {
+                appliedEvents.put(event.eventId(), event);
+                effects++;
+            }
+            observe(
+                "inventory",
+                "event.consumed",
+                event.traceId(),
+                event.correlationId(),
+                event.operationId(),
+                event.eventId(),
+                first ? "applied" : "duplicate"
+            );
+        }
+
+        public List<Observation> observations() {
+            return List.copyOf(observations);
+        }
+
+        public int effects() {
+            return effects;
+        }
+
+        // [Implementation 2-4] 제한된 지표 태그
+        // 지표 태그는 값의 종류가 제한된 component와 outcome만 허용합니다.
+        public Set<String> metricTagKeys() {
+            return Set.of("component", "outcome");
+        }
+
+        public void validateMetricTagKeys(Set<String> keys) {
+            Set<String> forbidden = Set.of(
+                "requestId",
+                "operationId",
+                "eventId",
+                "correlationId",
+                "traceId",
+                "aggregateId",
+                "causationId"
+            );
+            if (!metricTagKeys().containsAll(keys)
+                || keys.stream().anyMatch(forbidden::contains)) {
+                throw new IllegalArgumentException("unbounded metric tag key");
+            }
+        }
+
+        public int metricCount(String component, String outcome) {
+            return metrics.getOrDefault(component + "|" + outcome, 0);
+        }
+
+        // [Implementation 2-5] 관찰 기록과 지표 동시 집계
+        // 한 처리 결과를 기록할 때 상세 관찰값과 낮은 cardinality 지표를 함께 갱신합니다.
         private void observe(
             String component,
             String action,
@@ -125,6 +185,10 @@ public final class ObservabilityCorrelation {
                 eventId,
                 outcome
             ));
+            metrics.merge(component + "|" + outcome, 1, Integer::sum);
         }
+    }
+
+    private ObservabilityCorrelation() {
     }
 }
