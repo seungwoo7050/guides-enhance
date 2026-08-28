@@ -1,0 +1,77 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 로그와 임시 상태
+*.log
+*.pid
+*.tmp
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+.venv/
+*.py[cod]
+.coverage
+htmlcov/
+
+# C와 C++
+build/
+**/build/
+**/build-*/
+.guide-probes/
+**/.guide-probes/
+*.o
+*.d
+*.a
+*.out
+*.dSYM/
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+
+# CMake와 IDE
+CMakeUserPresets.json
+compile_commands.json
+**/compile_commands.json
+.vscode/
+.idea/
+
+# guide-cpp local verification artifacts
+make-out.txt
+tree.txt
+.workspace/
+
+# C++98 exercise executables
+exercises/**/reference/app
+exercises/**/skeleton/app
+exercises/**/reference/tests
+exercises/**/skeleton/tests
+exercises/**/reference/demo
+exercises/**/reference/failure
+exercises/**/reference/interface_test
+exercises/**/reference/text_buffer_test
+exercises/**/reference/date_lookup
+exercises/**/skeleton/date_lookup
+exercises/**/reference/rpn
+exercises/**/skeleton/rpn
+exercises/**/reference/sorter
+exercises/**/skeleton/sorter
+exercises/**/reference/line_server
+exercises/**/skeleton/blocking_server
+exercises/**/reference/http_server
+exercises/**/skeleton/http_server
+exercises/**/reference/cgi_runner
+exercises/**/skeleton/cgi_runner
+exercises/**/reference/integrated_http_server
+exercises/**/skeleton/integrated_http_server
+exercises/**/reference/commit_failure
