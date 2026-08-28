@@ -15,6 +15,7 @@ from verified_algorithms.ranges import prefix_sums, range_sum, lower_bound
 from verified_algorithms.trees import RedBlackNode, red_black_height
 from verified_algorithms.optimization import knapsack_01, select_intervals, lcs_length
 from verified_algorithms.graphs import bfs_distances, dijkstra, kruskal_mst, bellman_ford, max_flow
+from verified_algorithms.strings import kmp_find
 def all_pairs_distances(
     size: int,
     edges: list[tuple[int, int, int]],
@@ -581,6 +582,36 @@ class GraphTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             max_flow([[0, -1], [0, 0]], 0, 1)
         self.assertEqual(max_flow([[0]], 0, 0), (0, [[0]]))
+
+
+class StringTests(unittest.TestCase):
+    def test_kmp_matches_builtin_find(self) -> None:
+        cases = [
+            ("", ""),
+            ("", "a"),
+            ("aaaa", "aa"),
+            ("abababac", "ababac"),
+            ("abc", "abcd"),
+            ("needle in a haystack", "hay"),
+        ]
+        for text, pattern in cases:
+            self.assertEqual(kmp_find(text, pattern), text.find(pattern))
+
+        source = random.Random(20250208)
+        alphabet = "abca"
+        for _ in range(400):
+            text = "".join(
+                source.choice(alphabet)
+                for _ in range(source.randrange(30))
+            )
+            pattern = "".join(
+                source.choice(alphabet)
+                for _ in range(source.randrange(10))
+            )
+            self.assertEqual(
+                kmp_find(text, pattern),
+                text.find(pattern),
+            )
 
 
 if __name__ == "__main__":
