@@ -1,0 +1,19 @@
+# [Implementation 1] Define package metadata, Python requirements, and the console script.
+[build-system]
+requires = []
+build-backend = "_command_checker_build"
+backend-path = ["."]
+
+[project]
+name = "command-checker"
+version = "1.0.0"
+description = "Run external commands against JSON case contracts"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+command-checker = "command_checker.cli:main"
+
+[tool.command-checker.type-contract]
+require-annotations = true
+disallow-any-in-public-api = true
