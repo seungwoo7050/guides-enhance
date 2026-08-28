@@ -271,6 +271,107 @@ finalize_local_paths() {
     git -C "$repo" config core.hooksPath "$FINAL_LAB_DIR/.empty-hooks"
 }
 
+# [Implementation 5]
+# Sample repository and bare remote generation
+create_sample_topology() {
+    local remote="$REMOTES_DIR/sample-app.git"
+    local seed="$TMP_DIR/sample-app-seed"
+    local clone="$LAB_DIR/sample-app"
+
+    init_bare_remote "$remote"
+    init_repository "$seed"
+    configure_repository "$seed" 'Sample Maintainer' 'sample-maintainer@example.invalid'
+
+    mkdir -p "$seed/src" "$seed/tests" "$seed/scripts"
+
+    cat > "$seed/src/validate_title.sh" <<'SOURCE'
+#!/usr/bin/env sh
+
+is_valid_title() {
+    [ "$#" -eq 1 ] || return 1
+
+    title=$1
+    length=${#title}
+
+    [ "$length" -ge 3 ] && [ "$length" -le 60 ]
+}
+SOURCE
+
+    cat > "$seed/tests/test_validate_title.sh" <<'TEST'
+#!/usr/bin/env sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$ROOT/src/validate_title.sh"
+
+expect_valid() {
+    is_valid_title "$1" || {
+        printf 'Expected a valid title: %s\n' "$1" >&2
+        exit 1
+    }
+}
+
+expect_invalid() {
+    if is_valid_title "$1"; then
+        printf 'Expected an invalid title: %s\n' "$1" >&2
+        exit 1
+    fi
+}
+
+expect_valid 'Fix login redirect'
+expect_invalid ''
+expect_invalid 'ab'
+expect_invalid '1234567890123456789012345678901234567890123456789012345678901'
+printf '%s\n' 'title validation passed'
+TEST
+
+    cat > "$seed/scripts/test.sh" <<'SCRIPT'
+#!/usr/bin/env sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+"$ROOT/tests/test_validate_title.sh"
+SCRIPT
+
+    chmod +x \
+        "$seed/src/validate_title.sh" \
+        "$seed/tests/test_validate_title.sh" \
+        "$seed/scripts/test.sh"
+
+    cat > "$seed/README.md" <<'README'
+# Sample Task Application
+
+이 저장소에는 3자 이상 60자 이하의 작업 제목만 허용하는
+POSIX 셸 검증 도구가 포함되어 있습니다.
+
+## 검증
+
+```sh
+./scripts/test.sh
+```
+
+## 의존성
+
+외부 패키지는 필요하지 않습니다.
+README
+
+    cat > "$seed/.gitignore" <<'IGNORE'
+build/
+*.tmp
+.env.local
+.DS_Store
+IGNORE
+
+    git -C "$seed" add .
+    git -C "$seed" commit -m 'feat: add title validation' >/dev/null
+    git -C "$seed" remote add origin "$remote"
+    git -C "$seed" push --quiet -u origin main
+
+    clone_local_remote "$remote" "$clone"
+    configure_repository "$clone" 'Sample Developer' 'sample-developer@example.invalid'
+    finalize_clone_paths "$clone" "$FINAL_LAB_DIR/remotes/sample-app.git"
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     parse_arguments "$@"
     assert_runtime_boundary
