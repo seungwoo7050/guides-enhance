@@ -555,6 +555,142 @@ README
     finalize_local_paths "$repo"
 }
 
+# [Implementation 8]
+# Atomic lab publication
+
+# [Implementation 8-1]
+# Exclusive first publication
+atomic_publish_no_replace() {
+    python3 - "$1" "$2" <<'PY'
+import ctypes
+import os
+import sys
+
+source, destination = map(os.fsencode, sys.argv[1:])
+libc = ctypes.CDLL(None, use_errno=True)
+
+# 존재 여부 확인과 일반 rename 사이에는 대상이 새로 생길 수 있습니다.
+# 커널의 no-replace 연산으로 확인과 이동을 한 번에 수행합니다.
+
+try:
+    if sys.platform == "darwin":
+        function = libc.renamex_np
+        function.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        function.restype = ctypes.c_int
+        status = function(source, destination, 0x00000004)  # RENAME_EXCL
+    elif sys.platform.startswith("linux"):
+        function = libc.renameat2
+        function.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        function.restype = ctypes.c_int
+        status = function(-100, source, -100, destination, 0x00000001)  # RENAME_NOREPLACE
+    else:
+        raise SystemExit(
+            f"Exclusive atomic publish is unsupported on this platform: {sys.platform}"
+        )
+except AttributeError as error:
+    raise SystemExit(f"Required atomic rename API is unavailable: {error}") from error
+
+if status:
+    error = ctypes.get_errno()
+    raise OSError(error, os.strerror(error), os.fsdecode(destination))
+PY
+}
+
+# [Implementation 8-2]
+# Destination-identity-checked exchange
+atomic_exchange() {
+    python3 - "$1" "$2" "$3" <<'PY'
+import ctypes
+import os
+import sys
+
+source_path, destination_path, expected_identity = sys.argv[1:]
+metadata = os.lstat(destination_path)
+identity = f"{metadata.st_dev}:{metadata.st_ino}"
+# 잠금 디렉터리를 만든 뒤 대상 inode가 바뀌었다면
+# 다른 프로세스가 만든 결과를 덮어쓰지 않습니다.
+if identity != expected_identity:
+    raise SystemExit("Lab destination identity changed before publication.")
+
+source, destination = map(os.fsencode, (source_path, destination_path))
+libc = ctypes.CDLL(None, use_errno=True)
+
+# 기존 `lab/`을 먼저 지우지 않습니다. exchange가 성공하는 한 순간에
+# 준비한 디렉터리와 기존 디렉터리의 위치를 바꿉니다.
+
+try:
+    if sys.platform == "darwin":
+        function = libc.renamex_np
+        function.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        function.restype = ctypes.c_int
+        status = function(source, destination, 0x00000002)  # RENAME_SWAP
+    elif sys.platform.startswith("linux"):
+        function = libc.renameat2
+        function.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        function.restype = ctypes.c_int
+        status = function(-100, source, -100, destination, 0x00000002)  # RENAME_EXCHANGE
+    else:
+        raise SystemExit(
+            f"Atomic exchange is unsupported on this platform: {sys.platform}"
+        )
+except AttributeError as error:
+    raise SystemExit(f"Required atomic rename API is unavailable: {error}") from error
+
+if status:
+    error = ctypes.get_errno()
+    raise OSError(error, os.strerror(error), destination_path)
+PY
+}
+
+publish_staged_lab() {
+    if (( FINAL_EXISTED == 1 )); then
+        atomic_exchange "$STAGING_DIR" "$FINAL_LAB_DIR" "$FINAL_IDENTITY"
+        rm -rf -- "$STAGING_DIR"
+    else
+        atomic_publish_no_replace "$STAGING_DIR" "$FINAL_LAB_DIR"
+    fi
+    STAGING_DIR=''
+}
+
+hold_before_publish_for_tests() {
+    if [[ "${LOCAL_GIT_LAB_TEST_HOLD:-0}" != 1 ]]; then
+        return
+    fi
+
+    local ready_file=${LOCAL_GIT_LAB_TEST_READY_FILE:-}
+    local release_file=${LOCAL_GIT_LAB_TEST_RELEASE_FILE:-}
+
+    if [[ -n "$ready_file" ]]; then
+        if [[ "$ready_file" != /* || -e "$ready_file" || -L "$ready_file" ]]; then
+            printf '%s\n' 'Test ready file must be a new absolute path.' >&2
+            exit 1
+        fi
+        printf 'ready\n' > "$ready_file"
+    fi
+
+    if [[ -n "$release_file" ]]; then
+        while [[ ! -e "$release_file" ]]; do
+            sleep 0.02
+        done
+    else
+        while :; do
+            sleep 1
+        done
+    fi
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     parse_arguments "$@"
     assert_runtime_boundary
