@@ -1,0 +1,21 @@
+{
+  "operations": [
+    {"op": "create", "name": "report", "data": "v1"},
+    {"op": "fsync-file", "name": "report"},
+    {"op": "fsync-directory"},
+    {"op": "write", "name": "report", "data": "v2"},
+    {"op": "crash"}
+  ],
+  "expected": {
+    "applied": [],
+    "journal": [],
+    "filesystem": {
+      "directory": {"report": 1},
+      "durable_directory": {"report": 1},
+      "directory_dirty": false,
+      "inodes": {
+        "1": {"cached_data": "v1", "durable_data": "v1", "dirty": false, "links": 1}
+      }
+    }
+  }
+}

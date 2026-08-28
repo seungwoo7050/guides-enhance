@@ -1,0 +1,21 @@
+{
+  "name": "items",
+  "operations": [
+    {"op": "prepare", "tid": "consumer"},
+    {"op": "notify-one"},
+    {"op": "commit", "tid": "consumer"},
+    {"op": "prepare", "tid": "consumer"},
+    {"op": "commit", "tid": "consumer"},
+    {"op": "notify-all"}
+  ],
+  "expected": {
+    "generation": 2,
+    "waiters": [],
+    "outcomes": [
+      {"awakened": null},
+      {"tid": "consumer", "slept": false},
+      {"tid": "consumer", "slept": true},
+      {"awakened": ["consumer"]}
+    ]
+  }
+}

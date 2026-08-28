@@ -1,0 +1,26 @@
+{
+  "max_frames": 8,
+  "operations": [
+    {"op": "create-process", "pid": "parent"},
+    {"op": "map-zero", "pid": "parent", "vpn": 0},
+    {"op": "write", "pid": "parent", "vpn": 0, "value": 7},
+    {"op": "fork", "parent": "parent", "child": "child"},
+    {"op": "write", "pid": "child", "vpn": 0, "value": 9},
+    {"op": "read", "pid": "parent", "vpn": 0},
+    {"op": "read", "pid": "child", "vpn": 0}
+  ],
+  "expected": {
+    "results": [
+      {"fault": null},
+      {"fault": "copy-on-write"},
+      {"value": 7},
+      {"value": 9}
+    ],
+    "snapshot": {
+      "frames": {
+        "0": {"value": 7, "refcount": 1},
+        "1": {"value": 9, "refcount": 1}
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "mode": "detect",
+  "available": [0, 0],
+  "allocation": {"A": [1, 0], "B": [0, 1]},
+  "outstanding": {"A": [0, 1], "B": [1, 0]},
+  "expected": {"deadlocked": ["A", "B"]}
+}

@@ -1,0 +1,22 @@
+{
+  "queue_depth": 4,
+  "operations": [
+    {"op": "submit", "owner": "P1", "buffer_pages": [10, 11], "length": 8192, "as": "read-1"},
+    {"op": "start"},
+    {"op": "complete", "request": "read-1", "bytes_transferred": 4096},
+    {"op": "reap", "owner": "P1"}
+  ],
+  "expected": {
+    "reaped": [
+      {"request_id": 1, "state": "reaped", "bytes_transferred": 4096, "error": null}
+    ],
+    "snapshot": {
+      "pending": [],
+      "in_flight": [],
+      "completions": {},
+      "requests": {
+        "1": {"owner": "P1", "state": "reaped", "pinned": false}
+      }
+    }
+  }
+}

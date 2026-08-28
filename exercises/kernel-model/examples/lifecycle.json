@@ -1,0 +1,25 @@
+{
+  "operations": [
+    {"op": "add", "tid": "A"},
+    {"op": "admit", "tid": "A"},
+    {"op": "add", "tid": "B"},
+    {"op": "admit", "tid": "B"},
+    {"op": "dispatch"},
+    {"op": "block", "channel": "disk:0", "reason": "read"},
+    {"op": "dispatch"},
+    {"op": "exit"},
+    {"op": "wake-one", "channel": "disk:0"},
+    {"op": "dispatch"},
+    {"op": "exit"}
+  ],
+  "expected": {
+    "running": null,
+    "ready": [],
+    "completed": ["B", "A"],
+    "wait_queues": {},
+    "tasks": {
+      "A": {"state": "terminated", "wait_channel": null},
+      "B": {"state": "terminated", "wait_channel": null}
+    }
+  }
+}
