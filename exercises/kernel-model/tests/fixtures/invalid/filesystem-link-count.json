@@ -1,0 +1,12 @@
+{
+  "validator": "filesystem",
+  "expected_error": "Inode link count disagrees with the live directory",
+  "snapshot": {
+    "directory": {"a": 1},
+    "durable_directory": {"a": 1},
+    "directory_dirty": false,
+    "inodes": {
+      "1": {"cached_data": "x", "durable_data": "x", "dirty": false, "links": 2}
+    }
+  }
+}

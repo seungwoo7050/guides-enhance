@@ -1,0 +1,21 @@
+{
+  "validator": "device",
+  "expected_error": "An in-flight request has an invalid location",
+  "snapshot": {
+    "queue_depth": 8,
+    "pending": [1],
+    "in_flight": [1],
+    "completions": {},
+    "requests": {
+      "1": {
+        "owner": "P1",
+        "buffer_pages": [0],
+        "length": 512,
+        "state": "in-flight",
+        "pinned": true,
+        "bytes_transferred": 0,
+        "error": null
+      }
+    }
+  }
+}

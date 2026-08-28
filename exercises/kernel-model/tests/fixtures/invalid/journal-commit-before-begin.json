@@ -1,0 +1,7 @@
+{
+  "validator": "journal",
+  "expected_error": "Commit record is out of order",
+  "snapshot": [
+    {"txid": 1, "kind": "commit", "payload": {}}
+  ]
+}

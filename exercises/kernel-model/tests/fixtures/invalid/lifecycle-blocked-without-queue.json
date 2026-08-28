@@ -1,0 +1,11 @@
+{
+  "validator": "lifecycle",
+  "expected_error": "A BLOCKED task is not in its declared wait queue",
+  "snapshot": {
+    "running": null,
+    "ready": [],
+    "wait_queues": {},
+    "completed": [],
+    "tasks": {"A": {"state": "blocked", "wait_channel": "disk:0"}}
+  }
+}

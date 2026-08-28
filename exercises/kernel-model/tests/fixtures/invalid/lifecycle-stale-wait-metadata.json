@@ -1,0 +1,17 @@
+{
+  "validator": "lifecycle",
+  "expected_error": "A non-blocked task retains wait metadata",
+  "snapshot": {
+    "running": null,
+    "ready": ["A"],
+    "wait_queues": {},
+    "completed": [],
+    "tasks": {
+      "A": {
+        "state": "ready",
+        "wait_channel": "disk:0",
+        "block_reason": "read"
+      }
+    }
+  }
+}

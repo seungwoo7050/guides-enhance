@@ -1,0 +1,11 @@
+{
+  "validator": "lifecycle",
+  "expected_error": "A task appears more than once in the ready queue",
+  "snapshot": {
+    "running": null,
+    "ready": ["A", "A"],
+    "wait_queues": {},
+    "completed": [],
+    "tasks": {"A": {"state": "ready", "wait_channel": null}}
+  }
+}

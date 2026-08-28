@@ -1,0 +1,11 @@
+{
+  "validator": "memory",
+  "expected_error": "A shared frame is exposed as writable",
+  "snapshot": {
+    "frames": {"0": {"value": 7, "refcount": 2}},
+    "spaces": {
+      "parent": {"0": {"frame": 0, "present": true, "readable": true, "writable": true, "cow": false}},
+      "child": {"0": {"frame": 0, "present": true, "readable": true, "writable": false, "cow": true}}
+    }
+  }
+}

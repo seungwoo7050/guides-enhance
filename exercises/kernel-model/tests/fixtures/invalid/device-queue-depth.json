@@ -1,0 +1,30 @@
+{
+  "validator": "device",
+  "expected_error": "Active request count exceeds queue depth",
+  "snapshot": {
+    "queue_depth": 1,
+    "pending": [1, 2],
+    "in_flight": [],
+    "completions": {},
+    "requests": {
+      "1": {
+        "owner": "P1",
+        "buffer_pages": [0],
+        "length": 512,
+        "state": "queued",
+        "pinned": false,
+        "bytes_transferred": 0,
+        "error": null
+      },
+      "2": {
+        "owner": "P2",
+        "buffer_pages": [1],
+        "length": 512,
+        "state": "queued",
+        "pinned": false,
+        "bytes_transferred": 0,
+        "error": null
+      }
+    }
+  }
+}
