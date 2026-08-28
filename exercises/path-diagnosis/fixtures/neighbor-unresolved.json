@@ -1,0 +1,12 @@
+{
+  "request": {"name": "api.example.test", "port": 443, "transport": "tcp", "application": "https"},
+  "stages": [
+    {"stage": "dns", "status": "ok", "observation": "The resolver returned an address candidate.", "facts": {"rcode": "NOERROR", "addresses": ["203.0.113.10"]}},
+    {"stage": "route", "status": "ok", "observation": "A gateway route was selected.", "facts": {"selected": true, "prefix": "0.0.0.0/0", "next_hop": "192.0.2.1", "interface": "eth0"}},
+    {"stage": "neighbor", "status": "failed", "observation": "ARP probes for the next hop received no response.", "facts": {"state": "FAILED", "probes": 3, "next_hop": "192.0.2.1"}},
+    {"stage": "path", "status": "not-run", "observation": "No link-layer frame could be constructed.", "facts": {}},
+    {"stage": "transport", "status": "not-run", "observation": "No transport exchange was attempted.", "facts": {}},
+    {"stage": "tls", "status": "not-run", "observation": "No TLS handshake was attempted.", "facts": {}},
+    {"stage": "http", "status": "not-run", "observation": "No HTTP request was sent.", "facts": {}}
+  ]
+}

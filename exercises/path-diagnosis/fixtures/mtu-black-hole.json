@@ -1,0 +1,12 @@
+{
+  "request": {"name": "api.example.test", "port": 443, "transport": "tcp", "application": "https"},
+  "stages": [
+    {"stage": "dns", "status": "ok", "observation": "The resolver returned an address candidate.", "facts": {"rcode": "NOERROR", "addresses": ["203.0.113.10"]}},
+    {"stage": "route", "status": "ok", "observation": "An output route and next hop were selected.", "facts": {"selected": true, "prefix": "0.0.0.0/0", "next_hop": "192.0.2.1", "interface": "tun0"}},
+    {"stage": "neighbor", "status": "ok", "observation": "The next hop before the tunnel was resolved.", "facts": {"state": "REACHABLE", "link_address": "02:00:00:00:00:01"}},
+    {"stage": "path", "status": "failed", "observation": "Small probes succeed while larger probes disappear without a response.", "facts": {"small_packet_ok": true, "large_packet_ok": false, "icmp_too_big_seen": false, "interface_mtu": 1500, "tunnel_overhead": 80}},
+    {"stage": "transport", "status": "not-run", "observation": "A stable transport exchange was not established.", "facts": {}},
+    {"stage": "tls", "status": "not-run", "observation": "The TLS exchange did not start.", "facts": {}},
+    {"stage": "http", "status": "not-run", "observation": "No HTTP response was received.", "facts": {}}
+  ]
+}

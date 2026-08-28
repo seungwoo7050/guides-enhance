@@ -1,0 +1,12 @@
+{
+  "request": {"name": "api.example.test", "port": 443, "transport": "tcp", "application": "https"},
+  "stages": [
+    {"stage": "dns", "status": "ok", "observation": "The resolver returned an address candidate.", "facts": {"rcode": "NOERROR", "addresses": ["203.0.113.10"]}},
+    {"stage": "route", "status": "ok", "observation": "An output route and next hop were selected.", "facts": {"selected": true, "prefix": "0.0.0.0/0", "next_hop": "192.0.2.1", "interface": "eth0"}},
+    {"stage": "neighbor", "status": "ok", "observation": "The link-layer address of the next hop was resolved.", "facts": {"state": "REACHABLE", "link_address": "02:00:00:00:00:01"}},
+    {"stage": "path", "status": "ok", "observation": "Packet forwarding reached the destination boundary.", "facts": {"small_packet_ok": true, "large_packet_ok": true, "icmp_too_big_seen": false}},
+    {"stage": "transport", "status": "ok", "observation": "The TCP three-way handshake completed.", "facts": {"syn_sent": 1, "syn_ack_received": true, "rst_received": false}},
+    {"stage": "tls", "status": "ok", "observation": "Server authentication and ALPN negotiation succeeded.", "facts": {"certificate_name_match": true, "version": "TLSv1.3", "alpn": "h2"}},
+    {"stage": "http", "status": "failed", "observation": "The HTTP endpoint rejected the request for insufficient authorization.", "facts": {"status": 403, "server": "application", "request_id": "req-42"}}
+  ]
+}
