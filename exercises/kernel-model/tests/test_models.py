@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from kernel_model.deadlock import DeadlockInputError, detect_deadlocked, find_wait_cycle, safe_sequence
 from kernel_model.lifecycle import KernelState, TaskState
+from kernel_model.paging import FaultKind, MemoryFault, MemoryManager, simulate_replacement
 from kernel_model.scheduler import JobSpec, Policy, simulate
 from kernel_model.synchronization import ConditionChannel, CountingSemaphore, SynchronizationError, WaitToken
 
@@ -98,5 +99,46 @@ class DeadlockTests(unittest.TestCase):
     def test_rejects_vector_shape_mismatch(self) -> None:
         with self.assertRaises(DeadlockInputError):
             detect_deadlocked([0], {'A': [1, 0]}, {'A': [0, 1]})
+
+class PagingTests(unittest.TestCase):
+
+    def test_demand_zero_and_copy_on_write(self) -> None:
+        memory = MemoryManager(max_frames=8)
+        memory.create_process('parent')
+        memory.map_demand_zero('parent', 0)
+        self.assertEqual(memory.read('parent', 0), 0)
+        self.assertIsNone(memory.write('parent', 0, 7))
+        memory.fork('parent', 'child')
+        self.assertEqual(memory.read('child', 0), 7)
+        self.assertEqual(memory.write('child', 0, 9), FaultKind.COPY_ON_WRITE)
+        self.assertEqual(memory.read('parent', 0), 7)
+        self.assertEqual(memory.read('child', 0), 9)
+        self.assertEqual(len(memory.frames), 2)
+        memory.assert_invariants()
+
+    def test_write_protection_fault(self) -> None:
+        memory = MemoryManager()
+        memory.create_process('p')
+        memory.map_value('p', 1, 5, writable=False)
+        with self.assertRaises(MemoryFault) as context:
+            memory.write('p', 1, 6)
+        self.assertEqual(context.exception.kind, FaultKind.PROTECTION)
+
+    def test_read_only_demand_zero_write_does_not_allocate(self) -> None:
+        memory = MemoryManager()
+        memory.create_process('p')
+        memory.map_demand_zero('p', 2, writable=False)
+        with self.assertRaises(MemoryFault) as context:
+            memory.write('p', 2, 1)
+        self.assertEqual(context.exception.kind, FaultKind.PROTECTION)
+        self.assertEqual(memory.frames, {})
+        self.assertFalse(memory.spaces['p'].pages[2].present)
+
+    def test_replacement_policies_have_bounded_results(self) -> None:
+        references = [1, 2, 3, 1, 4, 5]
+        results = {policy: simulate_replacement(references, 3, policy) for policy in ('fifo', 'lru', 'clock')}
+        self.assertEqual(results['fifo'].faults, 5)
+        self.assertEqual(results['lru'].faults, 5)
+        self.assertTrue(4 <= results['clock'].faults <= 6)
 if __name__ == '__main__':
     unittest.main()
