@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Sequence, TextIO
 
-from .model import Case, Result, SpecificationError
+from .model import Case, ExecutionError, Result, SpecificationError
 from .process import run_case
 
 
@@ -32,9 +33,17 @@ def run_cases(
     command: Sequence[str],
     jobs: int,
 ) -> tuple[Result, ...]:
-    if jobs != 1:
-        raise SpecificationError("sequential execution requires jobs=1")
-    return tuple(run_case(case, command) for case in cases)
+    if jobs < 1:
+        raise SpecificationError("jobs must be at least 1")
+    if jobs == 1:
+        return tuple(run_case(case, command) for case in cases)
+
+    # [Implementation 9] Run cases with bounded workers while preserving input order.
+    try:
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            return tuple(executor.map(lambda case: run_case(case, command), cases))
+    except OSError as error:
+        raise ExecutionError(f"cannot create execution workers: {error}") from error
 
 
 # [Implementation 6-1] Send passing and failing results to the appropriate streams.

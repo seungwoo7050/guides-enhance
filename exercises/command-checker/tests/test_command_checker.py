@@ -5,9 +5,12 @@ import os
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
-from command_checker.model import Case, SpecificationError
+from command_checker.model import Case, Result, SpecificationError
 from command_checker.process import run_case
+from command_checker.reports import render_json, render_junit
+from command_checker.runner import run_cases
 from command_checker.specification import load_cases
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = Path(__file__).with_name('fixture_program.py')
@@ -47,6 +50,21 @@ class CommandCheckerTests(unittest.TestCase):
         self.assertFalse(output_result.passed)
         self.assertEqual(output_result.exceeded_stream, 'stdout')
         self.assertEqual(len(output_result.stdout.encode()), 1024)
+
+    def test_parallel_execution_preserves_input_order(self) -> None:
+        cases = (Case(name='slow', args=('delay', '0.15', 'slow'), stdout='slow\n'), Case(name='fast', args=('delay', '0.01', 'fast'), stdout='fast\n'))
+        results = run_cases(cases, (sys.executable, str(FIXTURE)), jobs=2)
+        self.assertEqual([result.name for result in results], ['slow', 'fast'])
+        self.assertTrue(all((result.passed for result in results)))
+
+    def test_reports_share_results_and_sanitize_xml(self) -> None:
+        results = (Result(name='control\x01name', passed=False, duration_ms=12, failures=('bad\x01value',), returncode=1, stdout='ok\x01bad\n', stderr=''),)
+        payload = json.loads(render_json(results))
+        self.assertEqual(payload['failed'], 1)
+        xml = render_junit(results)
+        self.assertNotIn('\x01', xml)
+        suite = ET.fromstring(xml)
+        self.assertEqual(suite.attrib['failures'], '1')
 
     @unittest.skipUnless(os.name == 'posix', 'process-group lifecycle requires POSIX')
     def test_timeout_terminates_spawned_process_group(self) -> None:

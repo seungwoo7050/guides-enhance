@@ -35,6 +35,12 @@ def main() -> int:
         sys.stdout.write(os.environ.get("OUT", ""))
         sys.stderr.write(os.environ.get("ERR", ""))
         return int(os.environ.get("CODE", "0"))
+    if mode == "delay":
+        delay = float(args[0])
+        label = args[1]
+        time.sleep(delay)
+        sys.stdout.write(label + "\n")
+        return 0
     if mode == "sleep":
         time.sleep(float(args[0]))
         return 0
@@ -60,6 +66,10 @@ def main() -> int:
         if mode == "spawn-child":
             time.sleep(60)
         return 0
+    if mode == "control":
+        sys.stdout.write("ok\x01bad\n")
+        return 0
+
     print(f"unknown mode: {mode}", file=sys.stderr)
     return 2
 
