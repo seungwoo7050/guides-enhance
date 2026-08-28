@@ -4,11 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -17,6 +19,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ConcurrentJobLedgerTest {
@@ -165,6 +169,70 @@ class ConcurrentJobLedgerTest {
       assertThat(running.get(2, TimeUnit.SECONDS).balance()).isEqualTo(1);
       assertThat(queued.get(2, TimeUnit.SECONDS).balance()).isEqualTo(2);
     }
+  }
+
+  @Test
+  void forcedCloseCancelsWorkThatNeverStarted() throws Exception {
+    BlockingClock clock = new BlockingClock(COMPLETED_AT);
+    ConcurrentJobLedger ledger = new ConcurrentJobLedger(0, 1, 1, clock);
+    CompletableFuture<JobReceipt> running =
+        ledger.submit(new CreditJob(new JobId("running-close"), 1));
+    assertThat(clock.awaitEntry()).isTrue();
+    CompletableFuture<JobReceipt> queued =
+        ledger.submit(new CreditJob(new JobId("queued-close"), 1));
+
+    try {
+      ledger.close(Duration.ofMillis(100));
+    } finally {
+      clock.release();
+    }
+
+    assertThat(queued).isCancelled();
+    assertThatThrownBy(() -> queued.get(2, TimeUnit.SECONDS))
+        .isInstanceOf(CancellationException.class);
+    assertThatThrownBy(() -> running.get(2, TimeUnit.SECONDS))
+        .isInstanceOf(ExecutionException.class)
+        .hasCauseInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void interruptedCloseRestoresInterruptStatusAndStopsAcceptedWork() throws Exception {
+    BlockingClock clock = new BlockingClock(COMPLETED_AT);
+    ConcurrentJobLedger ledger = new ConcurrentJobLedger(0, 1, 1, clock);
+    ledger.submit(new CreditJob(new JobId("blocked-close"), 1));
+    assertThat(clock.awaitEntry()).isTrue();
+
+    AtomicReference<Throwable> failure = new AtomicReference<>();
+    AtomicBoolean interrupted = new AtomicBoolean();
+    Thread closing =
+        new Thread(
+            () -> {
+              Thread.currentThread().interrupt();
+              try {
+                ledger.close(Duration.ofSeconds(1));
+              } catch (Throwable error) {
+                failure.set(error);
+                interrupted.set(Thread.currentThread().isInterrupted());
+              }
+            });
+    closing.start();
+    closing.join(5_000);
+    clock.release();
+
+    assertThat(closing.isAlive()).isFalse();
+    assertThat(failure.get())
+        .isInstanceOf(IllegalStateException.class)
+        .hasCauseInstanceOf(InterruptedException.class);
+    assertThat(interrupted.get()).isTrue();
+  }
+
+  @Test
+  void closedLedgerRejectsNewWork() {
+    ConcurrentJobLedger ledger = new ConcurrentJobLedger(0, 1, 1, FIXED_CLOCK);
+    ledger.close(Duration.ofSeconds(1));
+
+    assertThatThrownBy(() -> ledger.submit(new CreditJob(new JobId("late"), 1)))
+        .isInstanceOf(IllegalStateException.class);
   }
 
   // 작업 스레드를 clock.instant()에서 멈춰 실행 중 작업과 대기 중 작업을 안정적으로 만듭니다.

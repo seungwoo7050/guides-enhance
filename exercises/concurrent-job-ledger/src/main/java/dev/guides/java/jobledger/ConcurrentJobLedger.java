@@ -1,7 +1,9 @@
 package dev.guides.java.jobledger;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -13,6 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class ConcurrentJobLedger implements AutoCloseable {
+  private static final Duration DEFAULT_CLOSE_TIMEOUT = Duration.ofSeconds(5);
 
   // [Implementation 4] 잔액, 작업 기록, 실행기와 종료 상태의 수명을 원장이 관리합니다.
   private final Clock clock;
@@ -158,6 +161,44 @@ public final class ConcurrentJobLedger implements AutoCloseable {
     return slot.result();
   }
 
+  // [Implementation 8] 새 작업을 막고 정상 종료를 시도한 뒤 필요하면 남은 작업을 중단합니다.
+  public void close(Duration timeout) {
+    Objects.requireNonNull(timeout, "close timeout is required");
+    if (timeout.isNegative()) {
+      throw new IllegalArgumentException("close timeout must not be negative");
+    }
+    if (!closed.compareAndSet(false, true)) {
+      return;
+    }
+
+    executor.shutdown();
+    long timeoutNanos = timeout.toNanos();
+    try {
+      if (!executor.awaitTermination(timeoutNanos, TimeUnit.NANOSECONDS)) {
+        cancelQueued(executor.shutdownNow());
+        if (!executor.awaitTermination(timeoutNanos, TimeUnit.NANOSECONDS)) {
+          throw new IllegalStateException("executor did not terminate before the deadline");
+        }
+      }
+    } catch (InterruptedException exception) {
+      cancelQueued(executor.shutdownNow());
+      // 호출자가 종료 중단을 감지할 수 있도록 인터럽트 상태를 복원합니다.
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("executor shutdown was interrupted", exception);
+    }
+  }
+
   @Override
-  public void close() { executor.shutdown(); }
+  public void close() {
+    close(DEFAULT_CLOSE_TIMEOUT);
+  }
+
+  // [Implementation 8-1] 시작하지 못한 작업의 Future를 취소 상태로 바꿉니다.
+  private static void cancelQueued(List<Runnable> queued) {
+    for (Runnable task : queued) {
+      if (task instanceof JobTask jobTask) {
+        jobTask.slot.result().cancel(false);
+      }
+    }
+  }
 }
