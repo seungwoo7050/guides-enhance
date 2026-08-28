@@ -2,6 +2,7 @@ package dev.guides.distributed.boundary;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +75,50 @@ public final class ServiceBoundary {
             }
         }
 
+        findCycles(dependencies, serviceNames, issues);
         return List.copyOf(issues);
+    }
+
+    // [Implementation 3] 의존 그래프 탐색 상태
+    // 현재 재귀 경로와 검토가 끝난 노드를 별도 Set으로 관리합니다.
+    private static void findCycles(
+        Map<String, Set<String>> dependencies,
+        Set<String> services,
+        List<String> issues
+    ) {
+        Set<String> complete = new HashSet<>();
+        Set<String> visiting = new LinkedHashSet<>();
+        for (String service : services) {
+            visit(service, dependencies, services, visiting, complete, issues);
+        }
+    }
+
+    // [Implementation 3-1] 동기 의존 순환 검출
+    // 현재 재귀 경로에 다시 들어온 서비스만 순환으로 보고 이미 끝난 노드는 건너뜁니다.
+    private static void visit(
+        String service,
+        Map<String, Set<String>> dependencies,
+        Set<String> services,
+        Set<String> visiting,
+        Set<String> complete,
+        List<String> issues
+    ) {
+        if (complete.contains(service)) {
+            return;
+        }
+        if (!visiting.add(service)) {
+            issues.add("synchronous dependency cycle includes: " + service);
+            return;
+        }
+        for (String dependency : dependencies.getOrDefault(service, Set.of())) {
+            if (services.contains(dependency)) {
+                visit(dependency, dependencies, services, visiting, complete, issues);
+            }
+        }
+        visiting.remove(service);
+        complete.add(service);
+    }
+
+    private ServiceBoundary() {
     }
 }

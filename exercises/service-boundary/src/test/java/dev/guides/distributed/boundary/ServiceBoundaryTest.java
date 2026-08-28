@@ -9,6 +9,7 @@ public final class ServiceBoundaryTest {
         validOwnershipAndDirectionPass();
         sharedWriteAndMissingOwnerWriterFail();
         unknownReferencesFail();
+        synchronousCycleFails();
         System.out.println("service-boundary tests passed");
     }
 
@@ -72,4 +73,20 @@ public final class ServiceBoundaryTest {
         Checks.contains(issues, "unknown dependency", "Unknown dependencies must be reported");
     }
 
+    private static void synchronousCycleFails() {
+        ServiceBoundary.Architecture architecture = new ServiceBoundary.Architecture(
+            List.of(
+                service("orchestrator", "inventory"),
+                service("inventory", "orchestrator")
+            ),
+            List.of()
+        );
+
+        String issues = String.join("\n", ServiceBoundary.review(architecture));
+        Checks.contains(
+            issues,
+            "synchronous dependency cycle",
+            "A synchronous dependency cycle must be reported"
+        );
+    }
 }
