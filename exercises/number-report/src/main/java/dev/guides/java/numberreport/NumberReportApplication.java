@@ -1,6 +1,9 @@
 package dev.guides.java.numberreport;
 
 import java.io.PrintStream;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Locale;
 
 public final class NumberReportApplication {
   private static final int INVALID_INPUT = 2;
@@ -38,10 +41,24 @@ public final class NumberReportApplication {
       maximum = Math.max(maximum, value);
     }
 
+    // [Implementation 1-2] 평균의 자릿수와 Locale을 고정해 같은 형식으로 출력합니다.
+    BigDecimal average =
+        BigDecimal.valueOf(sum)
+            .divide(BigDecimal.valueOf(arguments.length), 2, RoundingMode.HALF_UP);
+
     output.println("count=" + arguments.length);
     output.println("min=" + minimum);
     output.println("max=" + maximum);
     output.println("sum=" + sum);
+    output.printf(Locale.ROOT, "average=%.2f%n", average);
     return 0;
+  }
+
+  // [Implementation 2] run이 반환한 상태를 프로세스 종료 상태로 전달합니다.
+  public static void main(String[] arguments) {
+    int status = run(arguments, System.out, System.err);
+    if (status != 0) {
+      System.exit(status);
+    }
   }
 }
