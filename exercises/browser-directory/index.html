@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>문서 검색</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <!-- [Implementation 1] Search form semantics -->
+  <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+  <header class="site-header">
+    <strong>개발 문서</strong>
+    <nav aria-label="주 메뉴"><a aria-current="page" href="./">검색</a></nav>
+  </header>
+  <main id="main" tabindex="-1">
+    <h1>문서 검색</h1>
+    <form id="search-form" role="search">
+      <label for="query">검색어</label>
+      <div class="form-row">
+        <input id="query" name="q" autocomplete="off" />
+        <button type="submit">검색</button>
+      </div>
+    </form>
+    <p id="status" role="status" aria-live="polite"></p>
+    <section aria-labelledby="result-heading">
+      <h2 id="result-heading">검색 결과</h2>
+      <div id="results" class="cards"></div>
+    </section>
+  </main>
+</body>
+</html>
