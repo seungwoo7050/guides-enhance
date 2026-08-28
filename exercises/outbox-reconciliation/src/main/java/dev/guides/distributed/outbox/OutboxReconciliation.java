@@ -210,4 +210,161 @@ public final class OutboxReconciliation {
             }
         }
     }
+
+    // [Implementation 7] Saga 진행 상태
+    // 정방향 처리, 보상 중, 완료와 취소를 구분해 아직 끝나지 않은 작업을 숨기지 않습니다.
+    public enum SagaState {
+        STARTED,
+        INVENTORY_RESERVED,
+        COMPENSATING,
+        COMPLETED,
+        CANCELLED
+    }
+
+    public static final class PaymentRejectedException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        public PaymentRejectedException() {
+            super("payment rejected");
+        }
+    }
+
+    public static final class CompensationUnavailableException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        public CompensationUnavailableException() {
+            super("inventory compensation unavailable");
+        }
+    }
+
+    // [Implementation 8] 재고 예약과 보상 상태
+    // InventoryParticipant가 가용 재고와 주문별 예약·해제 여부를 변경합니다.
+    public static final class InventoryParticipant {
+        private int available;
+        private final Set<String> reservedOrders = new HashSet<>();
+        private final Set<String> releasedOrders = new HashSet<>();
+        private boolean releaseAvailable = true;
+        private int releaseEffects;
+
+        public InventoryParticipant(int available) {
+            this.available = available;
+        }
+
+        // [Implementation 8-1] 주문별 재고 예약 한 번만 적용
+        // 재고 부족으로 실패한 예약은 ID 선점을 되돌려 이후의 정상 재시도를 막지 않습니다.
+        public void reserve(String orderId) {
+            if (!reservedOrders.add(orderId)) {
+                return;
+            }
+            if (available <= 0) {
+                reservedOrders.remove(orderId);
+                throw new IllegalStateException("inventory unavailable");
+            }
+            available--;
+        }
+
+        public void setReleaseAvailable(boolean releaseAvailable) {
+            this.releaseAvailable = releaseAvailable;
+        }
+
+        // [Implementation 8-2] 실패 후 다시 시도할 수 있는 보상
+        // 재고 해제가 성공한 뒤에만 완료를 기록해 외부 장애 시 재조정 근거를 남깁니다.
+        public void release(String orderId) {
+            if (!reservedOrders.contains(orderId) || releasedOrders.contains(orderId)) {
+                return;
+            }
+            if (!releaseAvailable) {
+                throw new CompensationUnavailableException();
+            }
+            releasedOrders.add(orderId);
+            available++;
+            releaseEffects++;
+        }
+
+        public int available() {
+            return available;
+        }
+
+        public int releaseEffects() {
+            return releaseEffects;
+        }
+    }
+
+    // [Implementation 9] 결제 승인·거절 재현
+    // PaymentParticipant는 Saga가 호출하는 결제 승인 결과만 제공합니다.
+    public static final class PaymentParticipant {
+        private boolean accept;
+
+        public PaymentParticipant(boolean accept) {
+            this.accept = accept;
+        }
+
+        public void setAccept(boolean accept) {
+            this.accept = accept;
+        }
+
+        public void charge(String orderId) {
+            if (!accept) {
+                throw new PaymentRejectedException();
+            }
+        }
+    }
+
+    // [Implementation 10] 주문 Saga 실행 상태
+    // OrderSaga가 주문별 현재 상태와 재고·결제 호출 순서를 보관합니다.
+    public static final class OrderSaga {
+        private final String orderId;
+        private final InventoryParticipant inventory;
+        private final PaymentParticipant payment;
+        private SagaState state = SagaState.STARTED;
+
+        public OrderSaga(
+            String orderId,
+            InventoryParticipant inventory,
+            PaymentParticipant payment
+        ) {
+            this.orderId = orderId;
+            this.inventory = inventory;
+            this.payment = payment;
+        }
+
+        // [Implementation 10-1] 정방향 처리와 보상 전환
+        // 결제가 거절되면 먼저 COMPENSATING을 기록한 뒤 재고 해제를 시도합니다.
+        public void execute() {
+            if (state == SagaState.COMPLETED || state == SagaState.CANCELLED) {
+                return;
+            }
+            inventory.reserve(orderId);
+            state = SagaState.INVENTORY_RESERVED;
+            try {
+                payment.charge(orderId);
+                state = SagaState.COMPLETED;
+            } catch (PaymentRejectedException rejection) {
+                state = SagaState.COMPENSATING;
+                compensate();
+            }
+        }
+
+        // [Implementation 10-2] 미완료 보상 재시도
+        // COMPENSATING 상태에 남은 주문만 다시 보상합니다.
+        public void reconcile() {
+            if (state == SagaState.COMPENSATING) {
+                compensate();
+            }
+        }
+
+        // [Implementation 10-3] 보상 성공 후 취소 확정
+        // 재고 해제가 성공한 경우에만 Saga를 CANCELLED로 바꿉니다.
+        private void compensate() {
+            inventory.release(orderId);
+            state = SagaState.CANCELLED;
+        }
+
+        public SagaState state() {
+            return state;
+        }
+    }
+
+    private OutboxReconciliation() {
+    }
 }

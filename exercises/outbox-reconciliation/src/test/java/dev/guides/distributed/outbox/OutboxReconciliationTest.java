@@ -7,6 +7,8 @@ public final class OutboxReconciliationTest {
         stateAndOutboxAreCreatedTogether();
         brokerFailureLeavesPendingWork();
         crashAfterPublishCanBeReconciledWithoutDuplicateEffect();
+        failedPaymentCompensatesInventory();
+        failedCompensationRemainsRecoverable();
         conflictingIdentifiersAreRejected();
         System.out.println("outbox-reconciliation tests passed");
     }
@@ -61,6 +63,55 @@ public final class OutboxReconciliationTest {
         Checks.equals(0, database.pending().size(), "Reconciliation must finish the row");
         Checks.equals(2, broker.deliveryCount(), "The logical event must be redelivered");
         Checks.equals(1, consumer.effectCount(), "Redelivery must preserve one business effect");
+    }
+
+    private static void failedPaymentCompensatesInventory() {
+        OutboxReconciliation.InventoryParticipant inventory =
+            new OutboxReconciliation.InventoryParticipant(1);
+        OutboxReconciliation.PaymentParticipant payment =
+            new OutboxReconciliation.PaymentParticipant(false);
+        OutboxReconciliation.OrderSaga saga =
+            new OutboxReconciliation.OrderSaga("order-saga-1", inventory, payment);
+
+        saga.execute();
+
+        Checks.equals(
+            OutboxReconciliation.SagaState.CANCELLED,
+            saga.state(),
+            "The Saga may be cancelled only after compensation completes"
+        );
+        Checks.equals(1, inventory.available(), "Compensation must restore inventory");
+        Checks.equals(1, inventory.releaseEffects(), "Compensation must have one effect");
+    }
+
+    private static void failedCompensationRemainsRecoverable() {
+        OutboxReconciliation.InventoryParticipant inventory =
+            new OutboxReconciliation.InventoryParticipant(1);
+        inventory.setReleaseAvailable(false);
+        OutboxReconciliation.PaymentParticipant payment =
+            new OutboxReconciliation.PaymentParticipant(false);
+        OutboxReconciliation.OrderSaga saga =
+            new OutboxReconciliation.OrderSaga("order-saga-2", inventory, payment);
+
+        Checks.throwsType(
+            OutboxReconciliation.CompensationUnavailableException.class,
+            saga::execute,
+            "A failed compensation must not be hidden as complete"
+        );
+        Checks.equals(
+            OutboxReconciliation.SagaState.COMPENSATING,
+            saga.state(),
+            "Incomplete recovery must remain explicit"
+        );
+        Checks.equals(0, inventory.available(), "Inventory remains reserved before recovery");
+
+        inventory.setReleaseAvailable(true);
+        saga.reconcile();
+        saga.reconcile();
+
+        Checks.equals(OutboxReconciliation.SagaState.CANCELLED, saga.state(), "Recovery must finish");
+        Checks.equals(1, inventory.available(), "Recovery must restore inventory");
+        Checks.equals(1, inventory.releaseEffects(), "Compensation retries must converge once");
     }
 
     private static void conflictingIdentifiersAreRejected() {
