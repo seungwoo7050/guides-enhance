@@ -14,7 +14,7 @@ sys.path.insert(0, str(SRC))
 from verified_algorithms.ranges import prefix_sums, range_sum, lower_bound
 from verified_algorithms.trees import RedBlackNode, red_black_height
 from verified_algorithms.optimization import knapsack_01, select_intervals, lcs_length
-from verified_algorithms.graphs import bfs_distances, dijkstra, kruskal_mst
+from verified_algorithms.graphs import bfs_distances, dijkstra, kruskal_mst, bellman_ford
 def all_pairs_distances(
     size: int,
     edges: list[tuple[int, int, int]],
@@ -396,6 +396,37 @@ class GraphTests(unittest.TestCase):
             dijkstra(2, [(0, 1, -1)], 0)
         with self.assertRaises(ValueError):
             dijkstra(2, [(0, 2, 1)], 0)
+
+    def test_bellman_ford_handles_negative_edges_and_cycle_contract(self) -> None:
+        source = random.Random(20250125)
+        for _ in range(50):
+            size = 7
+            edges = [
+                (left, right, source.randrange(-5, 10))
+                for left in range(size)
+                for right in range(left + 1, size)
+                if source.random() < 0.35
+            ]
+            self.assertEqual(
+                bellman_ford(size, edges, 0),
+                all_pairs_distances(size, edges)[0],
+            )
+
+        with self.assertRaises(ValueError):
+            bellman_ford(
+                3,
+                [(0, 1, 1), (1, 2, -2), (2, 1, -2)],
+                0,
+            )
+
+        self.assertEqual(
+            bellman_ford(
+                4,
+                [(0, 1, 3), (2, 3, -2), (3, 2, -2)],
+                0,
+            ),
+            [0, 3, None, None],
+        )
 
     def test_kruskal_matches_spanning_tree_enumeration(self) -> None:
         self.assertEqual(kruskal_mst(0, []), (0, []))

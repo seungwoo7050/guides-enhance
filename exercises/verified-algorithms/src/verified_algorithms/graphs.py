@@ -1,4 +1,4 @@
-"""Graph traversal, nonnegative shortest paths, and minimum spanning trees."""
+"""Graph traversal, shortest paths, and minimum spanning trees."""
 
 from __future__ import annotations
 
@@ -139,3 +139,44 @@ def kruskal_mst(
     if len(chosen) != vertex_count - 1:
         raise ValueError("the graph is disconnected")
     return total_weight, chosen
+
+
+# [Implementation 10]
+# Bellman–Ford negative-cycle boundary
+def bellman_ford(
+    vertex_count: int,
+    edges: Sequence[tuple[int, int, int]],
+    start: int,
+) -> list[int | None]:
+    """Return shortest paths or reject a reachable negative-weight cycle."""
+    if vertex_count < 0:
+        raise ValueError("vertex_count cannot be negative")
+    _validate_vertex(vertex_count, start)
+
+    normalized = list(edges)
+    for source, target, _weight in normalized:
+        _validate_vertex(vertex_count, source)
+        _validate_vertex(vertex_count, target)
+
+    distances: list[int | None] = [None] * vertex_count
+    distances[start] = 0
+    for _ in range(max(0, vertex_count - 1)):
+        changed = False
+        for source, target, weight in normalized:
+            if distances[source] is None:
+                continue
+            candidate = distances[source] + weight
+            if distances[target] is None or candidate < distances[target]:
+                distances[target] = candidate
+                changed = True
+        if not changed:
+            break
+
+    # 시작점에서 도달할 수 없는 음수 cycle은 이 single-source 결과에 영향을 주지 않습니다.
+    for source, target, weight in normalized:
+        if distances[source] is None:
+            continue
+        candidate = distances[source] + weight
+        if distances[target] is None or candidate < distances[target]:
+            raise ValueError("a negative-weight cycle is reachable from start")
+    return distances
