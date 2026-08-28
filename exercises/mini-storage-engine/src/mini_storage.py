@@ -515,3 +515,122 @@ class MiniStorageEngine:
             if fits:
                 return page_id
         return self.disk.allocate()
+
+    # [Implementation 8] WAL을 먼저 기록하는 auto-commit insert를 수행합니다.
+    # INSERT WAL 뒤 page를 바꾸고, COMMIT WAL을 flush한 다음에만 RID를 index에 공개합니다.
+    def insert(self, key: int, value: bytes) -> None:
+        key = _validate_key(key)
+        value = _validate_value(value)
+        try:
+            self.index.get(key)
+        except KeyError:
+            pass
+        else:
+            raise DuplicateKeyError(key)
+
+        page_id = self._choose_page(value)
+        txid = self._next_txid
+        self._next_txid += 1
+        insert_lsn = self.log.insert(txid, page_id, key, value)
+        page = self.buffer.fetch(page_id)
+        dirty = False
+        try:
+            slot_id = page.insert(key, value)
+            page.page_lsn = insert_lsn
+            dirty = True
+        finally:
+            self.buffer.unpin(page_id, dirty=dirty)
+        commit_lsn = self.log.commit(txid)
+        self.log.flush(commit_lsn)
+        self.index.insert(key, (page_id, slot_id))
+        self.index.validate()
+
+    # [Implementation 9] index를 이용해 읽고 checkpoint에서 dirty page를 flush합니다.
+    # point와 range 조회는 fetch마다 unpin하며, checkpoint는 WAL 조건을 만족한 frame만 기록합니다.
+    def get(self, key: int) -> bytes:
+        page_id, slot_id = self.index.get(key)
+        page = self.buffer.fetch(page_id)
+        try:
+            stored_key, value = page.read(slot_id)
+            if stored_key != key:
+                raise RuntimeError("index points to a different key")
+            return value
+        finally:
+            self.buffer.unpin(page_id)
+
+    def range(self, start: int, end: int) -> list[tuple[int, bytes]]:
+        return [(key, self.get(key)) for key, _ in self.index.range(start, end)]
+
+    def checkpoint(self) -> None:
+        self.buffer.flush_all()
+
+    @staticmethod
+    def _committed_transactions(records: list[LogRecord]) -> set[int]:
+        state: dict[int, str] = {}
+        committed: set[int] = set()
+        for record in records:
+            current = state.get(record.txid)
+            if record.kind == "INSERT":
+                if current is not None:
+                    raise ValueError("transaction contains duplicate or post-commit INSERT")
+                state[record.txid] = "INSERTED"
+            else:
+                if current != "INSERTED":
+                    raise ValueError("COMMIT does not follow exactly one INSERT")
+                state[record.txid] = "COMMITTED"
+                committed.add(record.txid)
+        return committed
+
+    # [Implementation 10] durable COMMIT이 있는 INSERT만 다시 적용합니다.
+    # heap을 처음부터 만들며 미완료 record를 제거하고 다음 txid를 durable log의 최댓값 뒤로 옮깁니다.
+    @classmethod
+    def recover(
+        cls,
+        disk: DiskManager,
+        durable_records: list[LogRecord],
+        *,
+        buffer_capacity: int = 2,
+    ) -> "MiniStorageEngine":
+        durable_lsn = max((record.lsn for record in durable_records), default=0)
+        log = LogManager(durable_records, durable_lsn)
+        committed = cls._committed_transactions(durable_records)
+
+        # 이 구현은 WAL 전체를 보존하고, 복구할 때 heap page를 처음부터 다시 만듭니다.
+        # 미완료 record가 disk에 기록됐더라도 COMMIT이 없는 INSERT는 재적용하지 않습니다.
+        page_ids = set(disk.page_ids)
+        page_ids.update(
+            record.page_id
+            for record in durable_records
+            if record.kind == "INSERT" and record.page_id is not None
+        )
+        if not page_ids:
+            page_ids.add(0)
+        disk.pages = {
+            page_id: SlottedPage(page_id, disk.page_size).serialize()
+            for page_id in sorted(page_ids)
+        }
+        disk._next_page_id = max(page_ids) + 1
+
+        engine = cls(disk, log, buffer_capacity=buffer_capacity)
+        engine._next_txid = max((record.txid for record in durable_records), default=0) + 1
+        replayed_keys: set[int] = set()
+
+        for record in durable_records:
+            if record.kind != "INSERT" or record.txid not in committed:
+                continue
+            assert record.page_id is not None and record.key is not None and record.value is not None
+            if record.key in replayed_keys:
+                raise ValueError("durable committed history contains a duplicate key")
+            page = engine.buffer.fetch(record.page_id)
+            dirty = False
+            try:
+                page.insert(record.key, record.value)
+                page.page_lsn = max(page.page_lsn, record.lsn)
+                dirty = True
+            finally:
+                engine.buffer.unpin(record.page_id, dirty=dirty)
+            replayed_keys.add(record.key)
+
+        engine.buffer.flush_all()
+        engine._rebuild_index()
+        return engine
