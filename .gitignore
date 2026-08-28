@@ -1,0 +1,51 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 준비·검증 상태
+/.guide-prepare.env
+/verify.log
+/make-out.txt
+/tree.txt
+exercises/**/workspace/
+exercises/**/.workspace.lock/
+exercises/**/.workspace.tmp.*/
+
+# 로그와 임시 상태
+*.log
+*.pid
+*.tmp
+core
+core.*
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+
+# C와 C++
+build/
+**/build/
+*.o
+*.d
+*.a
+*.out
+*.gcda
+*.gcno
+*.dSYM/
+
+# 예제/검증 산출 바이너리
+textstat
+textstat.exe
+fd_redirection
+process_group_forwarding
+repl
+sanitizer-probe
+
+# 검증 스크립트 임시 산출물
+sanitizer-probe
