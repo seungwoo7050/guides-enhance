@@ -6,16 +6,22 @@ import type { RawData, WebSocket } from "ws";
 
 import { ConnectionHub, type ClientConnection, type Role } from "./hub";
 import { ClientEventSchema, type ClientEvent } from "./protocol";
-import { BoardStore } from "./state";
+import { BoardStore, type MutationResult } from "./state";
 
 export interface RealtimeAppOptions {
   resolveRole?: (request: FastifyRequest) => Role;
+  heartbeatIntervalMs?: number;
 }
 
 // [Implementation 5] Per-app realtime state
 export async function buildApp({
-  resolveRole = () => "editor"
+  resolveRole = () => "editor",
+  heartbeatIntervalMs = 10_000
 }: RealtimeAppOptions = {}) {
+  if (!Number.isFinite(heartbeatIntervalMs) || heartbeatIntervalMs <= 0) {
+    throw new RangeError("heartbeatIntervalMs는 양수여야 합니다.");
+  }
+
   const app = Fastify({ logger: false });
   const boards = new BoardStore();
   const hub = new ConnectionHub();
@@ -32,6 +38,9 @@ export async function buildApp({
     };
     hub.add(client);
 
+    socket.on("pong", () => {
+      client.alive = true;
+    });
     socket.on("close", () => {
       hub.remove(client);
     });
@@ -57,13 +66,63 @@ export async function buildApp({
       return;
     }
 
+    if (event.type === "snapshot.request") {
+      hub.send(client, { type: "board.snapshot", snapshot: boards.snapshot(event.boardId) });
+      return;
+    }
+
+    if (event.type === "cursor.move") {
+      hub.broadcast(event.boardId, {
+        type: "cursor.moved",
+        cursor: { boardId: event.boardId, clientId: client.id, x: event.x, y: event.y }
+      });
+      return;
+    }
+
     // [Implementation 7] Viewer write rejection
     if (client.role === "viewer") {
       client.socket.close(1008, "쓰기 권한이 필요합니다.");
       return;
     }
 
+    const result = mutate(event);
+
+    // [Implementation 8] Snapshot, preview, and patch dispatch
+    if (result.kind === "stale") {
+      hub.send(client, { type: "board.snapshot", snapshot: result.snapshot });
+      return;
+    }
+    hub.broadcast(event.boardId, result.event);
   }
+
+  function mutate(event: Exclude<ClientEvent, { type: "board.join" | "snapshot.request" | "cursor.move" }>): MutationResult {
+    if (event.type === "item.create") {
+      return boards.createItem(event.boardId, event);
+    }
+    if (event.type === "item.update") {
+      return boards.updateItem(event.boardId, event);
+    }
+    return boards.moveItem(event.boardId, event);
+  }
+
+  // [Implementation 9] Heartbeat and shutdown cleanup
+  const heartbeat = setInterval(() => {
+    for (const client of hub.all()) {
+      if (!client.alive) {
+        client.socket.terminate();
+        hub.remove(client);
+        continue;
+      }
+      client.alive = false;
+      client.socket.ping();
+    }
+  }, heartbeatIntervalMs);
+  heartbeat.unref();
+
+  app.addHook("onClose", async () => {
+    clearInterval(heartbeat);
+    hub.closeAll();
+  });
 
   return app;
 }
