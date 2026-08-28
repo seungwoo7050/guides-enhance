@@ -1,0 +1,8 @@
+services:
+  gateway:
+    healthcheck:
+      test: ["CMD", "false"]
+      interval: 1s
+      timeout: 1s
+      retries: 3
+      start_period: 0s

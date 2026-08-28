@@ -1,0 +1,4 @@
+services:
+  gateway:
+    environment:
+      APP_UPSTREAM: app:9999
