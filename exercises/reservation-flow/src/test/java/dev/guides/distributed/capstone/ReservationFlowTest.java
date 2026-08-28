@@ -8,6 +8,11 @@ Checks.equals(result, service.submit("op", "correlation", 1), "Idempotent reques
 Checks.equals(1, service.reservationCount(), "One reservation");
 Checks.equals(1, service.pendingOutboxCount(), "Atomic outbox creation");
 Checks.throwsType(IllegalArgumentException.class, () -> service.submit("op", "correlation", 2), "Conflicting input");
+var inventory = new ReservationFlow.InventoryService(5);
+var request = service.pendingOutbox().get(0);
+var outcome = inventory.handle(request);
+Checks.equals(outcome, inventory.handle(request), "Inventory deduplication");
+Checks.equals(4, inventory.available(), "One allocation");
 System.out.println("stage tests passed");
 }
 

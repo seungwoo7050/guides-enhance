@@ -405,4 +405,110 @@ public final class ReservationFlow {
             return reservation;
         }
     }
+
+    // [Implementation 4] 재고와 operation별 결과 저장
+    // InventoryService만 재고를 차감하고 operation ID별 확정 결과를 보관합니다.
+    public static final class InventoryService {
+        private int available;
+        private int allocationEffects;
+        private final Map<String, Event> resultByRequestEvent = new HashMap<>();
+        private final Map<String, Event> requestsByEventId = new HashMap<>();
+        private final Map<String, Event> requestsByOperation = new HashMap<>();
+        private final Map<String, Event> resultByOperation = new HashMap<>();
+        private final List<String> lookupOperations = new ArrayList<>();
+        private boolean lookupAvailable = true;
+
+        public InventoryService(int available) {
+            if (available < 0) {
+                throw new IllegalArgumentException("available must not be negative");
+            }
+            this.available = available;
+        }
+
+        // [Implementation 4-1] 재고 차감 한 번만 적용
+        // event ID와 operation ID를 모두 확인한 뒤 처음 본 요청에서만 재고를 줄입니다.
+        public Event handle(Event request) {
+            if (request == null || request.kind() != Kind.RESERVATION_REQUESTED) {
+                throw new IllegalArgumentException("not a reservation request");
+            }
+
+            Event previous = resultByRequestEvent.get(request.eventId());
+            if (previous != null) {
+                if (!request.equals(requestsByEventId.get(request.eventId()))) {
+                    throw new IllegalArgumentException(
+                        "request event ID was reused with different payload"
+                    );
+                }
+                return previous;
+            }
+
+            Event previousOperation = requestsByOperation.get(request.causationId());
+            if (previousOperation != null) {
+                if (!sameOperationInput(previousOperation, request)) {
+                    throw new IllegalArgumentException(
+                        "inventory operation ID was reused with different input"
+                    );
+                }
+                Event operationResult = resultByOperation.get(request.causationId());
+                requestsByEventId.put(request.eventId(), request);
+                resultByRequestEvent.put(request.eventId(), operationResult);
+                return operationResult;
+            }
+
+            boolean accepted = request.quantity() <= available;
+            if (accepted) {
+                available -= request.quantity();
+                allocationEffects++;
+            }
+            Event result = new Event(
+                "inventory-result-" + request.reservationId(),
+                accepted ? Kind.INVENTORY_ACCEPTED : Kind.INVENTORY_REJECTED,
+                request.reservationId(),
+                1,
+                request.quantity(),
+                request.correlationId(),
+                request.eventId()
+            );
+            resultByRequestEvent.put(request.eventId(), result);
+            requestsByEventId.put(request.eventId(), request);
+            requestsByOperation.put(request.causationId(), request);
+            resultByOperation.put(request.causationId(), result);
+            return result;
+        }
+
+        private static boolean sameOperationInput(Event left, Event right) {
+            return left.kind() == right.kind()
+                && left.reservationId().equals(right.reservationId())
+                && left.sequence() == right.sequence()
+                && left.quantity() == right.quantity()
+                && left.correlationId().equals(right.correlationId())
+                && left.causationId().equals(right.causationId());
+        }
+
+        // [Implementation 4-2] 원래 operation ID로 결과 조회
+        // 재조정은 최초 operation ID로 InventoryService의 확정 결과를 조회합니다.
+        public Event findResultByOperation(String operationId) {
+            lookupOperations.add(operationId);
+            if (!lookupAvailable) {
+                throw new InventoryQueryUnavailable();
+            }
+            return resultByOperation.get(operationId);
+        }
+
+        public void setLookupAvailable(boolean lookupAvailable) {
+            this.lookupAvailable = lookupAvailable;
+        }
+
+        public List<String> lookupOperations() {
+            return List.copyOf(lookupOperations);
+        }
+
+        public int available() {
+            return available;
+        }
+
+        public int allocationEffects() {
+            return allocationEffects;
+        }
+    }
 }
