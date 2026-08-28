@@ -2,8 +2,10 @@ package dev.guides.distributed.outbox;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class OutboxReconciliation {
     // [Implementation 1] 업무 이벤트 식별자
@@ -105,6 +107,107 @@ public final class OutboxReconciliation {
 
         public synchronized int outboxCount() {
             return outbox.size();
+        }
+    }
+
+    // [Implementation 4] 소비자의 중복 처리 기록
+    // Consumer는 전달 횟수와 별개로 처리한 이벤트 지문과 조회 모델 효과를 보관합니다.
+    public static final class Consumer {
+        private final Map<String, DomainEvent> processed = new HashMap<>();
+        private final Set<String> projectedOrders = new HashSet<>();
+
+        // [Implementation 4-1] 동일 재전달과 ID 충돌 구분
+        // 동일 payload의 재전달은 무시하고 같은 ID의 다른 payload는 상태 변경 전에 거절합니다.
+        public synchronized void onEvent(DomainEvent event) {
+            DomainEvent previous = processed.get(event.eventId());
+            if (previous != null) {
+                if (!previous.equals(event)) {
+                    throw new IllegalArgumentException(
+                        "event ID was reused with different payload"
+                    );
+                }
+                return;
+            }
+            processed.put(event.eventId(), event);
+            projectedOrders.add(event.orderId());
+        }
+
+        public synchronized int effectCount() {
+            return projectedOrders.size();
+        }
+    }
+
+    // [Implementation 5] 브로커 가용성과 전달 횟수
+    // Broker는 전송 가능 여부와 실제 전달 횟수만 기록하며 업무 효과 완료 여부는 판단하지 않습니다.
+    public static final class Broker {
+        private final Consumer consumer;
+        private boolean available = true;
+        private int deliveryCount;
+
+        public Broker(Consumer consumer) {
+            this.consumer = consumer;
+        }
+
+        public synchronized void setAvailable(boolean available) {
+            this.available = available;
+        }
+
+        public synchronized void send(DomainEvent event) {
+            if (!available) {
+                throw new BrokerUnavailableException();
+            }
+            deliveryCount++;
+            consumer.onEvent(event);
+        }
+
+        public synchronized int deliveryCount() {
+            return deliveryCount;
+        }
+    }
+
+    // [Implementation 6] 미발행 Outbox 처리
+    // Publisher는 Database의 미발행 행을 Broker로 보내고 성공한 건만 완료로 표시합니다.
+    public static final class Publisher {
+        private final Database database;
+        private final Broker broker;
+
+        public Publisher(Database database, Broker broker) {
+            this.database = database;
+            this.broker = broker;
+        }
+
+        // [Implementation 6-1] 전송 후 완료 표시 전 중단
+        // send를 먼저 호출해 전송 성공 뒤 프로세스가 멈추면 같은 이벤트가 다시 전달될 수 있게 합니다.
+        public boolean publishNext(boolean crashAfterSend) {
+            List<OutboxRow> pending = database.pending();
+            if (pending.isEmpty()) {
+                return false;
+            }
+
+            OutboxRow row = pending.get(0);
+            row.recordAttempt();
+            broker.send(row.event());
+
+            if (crashAfterSend) {
+                throw new SimulatedCrashException();
+            }
+
+            row.markPublished();
+            return true;
+        }
+
+        // [Implementation 6-2] 미발행 행 재처리
+        // 브로커 장애에서는 미발행 상태를 남기고 종료해 다음 실행이 같은 행부터 이어받습니다.
+        public void reconcile() {
+            while (true) {
+                try {
+                    if (!publishNext(false)) {
+                        return;
+                    }
+                } catch (BrokerUnavailableException unavailable) {
+                    return;
+                }
+            }
         }
     }
 }
