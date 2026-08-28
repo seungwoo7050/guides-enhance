@@ -1,6 +1,7 @@
 package dev.guides.java.executor;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
@@ -68,6 +69,35 @@ public final class BoundedTaskRunner implements AutoCloseable {
     }
   }
 
+  // [Implementation 4] 정상 종료를 먼저 시도하고 필요하면 남은 작업을 강제로 중단합니다.
   @Override
-  public void close() { executor.shutdown(); }
+  public void close() {
+    executor.shutdown();
+    boolean interrupted = false;
+    try {
+      if (!executor.awaitTermination(shutdownTimeout.toNanos(), TimeUnit.NANOSECONDS)) {
+        cancelQueued(executor.shutdownNow());
+        if (!executor.awaitTermination(shutdownTimeout.toNanos(), TimeUnit.NANOSECONDS)) {
+          throw new IllegalStateException("executor did not terminate before the deadline");
+        }
+      }
+    } catch (InterruptedException exception) {
+      interrupted = true;
+      cancelQueued(executor.shutdownNow());
+    } finally {
+      if (interrupted) {
+        // 상위 종료 코드가 중단 요청을 확인할 수 있도록 상태를 복원합니다.
+        Thread.currentThread().interrupt();
+      }
+    }
+  }
+
+  // [Implementation 4-1] 시작하지 못한 대기 작업의 Future를 취소 상태로 바꿉니다.
+  private static void cancelQueued(List<Runnable> queued) {
+    for (Runnable task : queued) {
+      if (task instanceof Future<?> future) {
+        future.cancel(false);
+      }
+    }
+  }
 }
