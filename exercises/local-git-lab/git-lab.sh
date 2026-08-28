@@ -500,6 +500,61 @@ CONFIG
     finalize_clone_paths "$maintainer" "$FINAL_LAB_DIR/remotes/team-app.git"
 }
 
+# [Implementation 7]
+# Recovery refs, revert, and stash generation
+create_recovery_topology() {
+    local repo="$LAB_DIR/recovery-lab"
+    local reset_target
+    local detached_target
+    local tree_before
+
+    init_repository "$repo"
+    configure_repository "$repo" 'Recovery Operator' 'recovery-operator@example.invalid'
+
+    cat > "$repo/README.md" <<'README'
+# Recovery Reference Repository
+
+이 저장소에는 reset 뒤 별도 브랜치로 보존한 커밋과
+detached `HEAD`에서 만든 커밋이 있습니다. revert 전후 커밋과 stash도
+함께 들어 있습니다.
+README
+    printf 'base\n' > "$repo/state.txt"
+    git -C "$repo" add README.md state.txt
+    git -C "$repo" commit -m 'chore: establish recovery baseline' >/dev/null
+    git -C "$repo" branch -M main
+
+    printf 'reset target\n' > "$repo/reset.txt"
+    git -C "$repo" add reset.txt
+    git -C "$repo" commit -m 'feat: create reset recovery target' >/dev/null
+    reset_target=$(git -C "$repo" rev-parse HEAD)
+    git -C "$repo" reset --hard --quiet HEAD^
+    git -C "$repo" branch recovery/reset "$reset_target"
+
+    git -C "$repo" switch --quiet --detach main
+    printf 'detached target\n' > "$repo/detached.txt"
+    git -C "$repo" add detached.txt
+    git -C "$repo" commit -m 'feat: create detached recovery target' >/dev/null
+    detached_target=$(git -C "$repo" rev-parse HEAD)
+    git -C "$repo" branch recovery/detached "$detached_target"
+    git -C "$repo" switch --quiet main
+
+    tree_before=$(git -C "$repo" write-tree)
+    printf 'temporary change\n' > "$repo/revert.txt"
+    git -C "$repo" add revert.txt
+    git -C "$repo" commit -m 'feat: add temporary recovery change' >/dev/null
+    git -C "$repo" revert --no-edit --quiet HEAD
+    if [[ "$(git -C "$repo" write-tree)" != "$tree_before" ]]; then
+        printf '%s\n' 'Revert did not restore the baseline tree.' >&2
+        exit 1
+    fi
+
+    printf 'tracked edit\n' >> "$repo/state.txt"
+    printf 'untracked edit\n' > "$repo/untracked.txt"
+    git -C "$repo" stash push --quiet -u -m 'recoverable working state'
+
+    finalize_local_paths "$repo"
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     parse_arguments "$@"
     assert_runtime_boundary
