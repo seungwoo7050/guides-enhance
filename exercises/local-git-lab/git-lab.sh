@@ -372,6 +372,134 @@ IGNORE
     finalize_clone_paths "$clone" "$FINAL_LAB_DIR/remotes/sample-app.git"
 }
 
+# [Implementation 6]
+# Divergent team repository graph generation
+create_team_topology() {
+    local remote="$REMOTES_DIR/team-app.git"
+    local seed="$TMP_DIR/team-app-seed"
+    local developer_a="$LAB_DIR/team-app-dev-a"
+    local developer_b="$LAB_DIR/team-app-dev-b"
+    local maintainer="$LAB_DIR/team-app-maintainer"
+
+    init_bare_remote "$remote"
+    init_repository "$seed"
+    configure_repository "$seed" 'Team Maintainer' 'team-maintainer@example.invalid'
+
+    mkdir -p "$seed/config" "$seed/scripts"
+
+    cat > "$seed/config/task-fields.yml" <<'CONFIG'
+fields:
+  - title
+  - status
+CONFIG
+
+    cat > "$seed/scripts/check.sh" <<'SCRIPT'
+#!/usr/bin/env sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+FILE="$ROOT/config/task-fields.yml"
+
+if ! grep -qx 'fields:' "$FILE"; then
+    printf 'Missing fields root: %s\n' "$FILE" >&2
+    exit 1
+fi
+
+if grep -Eq '^(<<<<<<<|=======|>>>>>>>)' "$FILE"; then
+    printf 'Conflict marker found: %s\n' "$FILE" >&2
+    exit 1
+fi
+
+for field in title status; do
+    if ! grep -qx "  - $field" "$FILE"; then
+        printf 'Missing required field: %s\n' "$field" >&2
+        exit 1
+    fi
+done
+
+duplicates=$(awk '/^  - / { count[$0]++; if (count[$0] == 2) print $0 }' "$FILE")
+if [ -n "$duplicates" ]; then
+    printf '%s\n' 'Duplicate fields found:' >&2
+    printf '%s\n' "$duplicates" >&2
+    exit 1
+fi
+
+printf '%s\n' 'team schema validation passed'
+SCRIPT
+
+    chmod +x "$seed/scripts/check.sh"
+
+    cat > "$seed/README.md" <<'README'
+# Team Task Schema
+
+이 저장소에는 공유 작업 필드 파일과 다음 문제를 검사하는 스크립트가
+포함되어 있습니다: 충돌 표시, 필수 필드 누락, 중복 필드.
+
+## 검증
+
+```sh
+./scripts/check.sh
+```
+README
+
+    cat > "$seed/.gitignore" <<'IGNORE'
+*.tmp
+.DS_Store
+IGNORE
+
+    git -C "$seed" add .
+    git -C "$seed" commit -m 'chore: establish shared task schema' >/dev/null
+    git -C "$seed" remote add origin "$remote"
+    git -C "$seed" push --quiet -u origin main
+
+    clone_local_remote "$remote" "$developer_a"
+    clone_local_remote "$remote" "$developer_b"
+    clone_local_remote "$remote" "$maintainer"
+
+    configure_repository "$developer_a" 'Developer A' 'developer-a@example.invalid'
+    configure_repository "$developer_b" 'Developer B' 'developer-b@example.invalid'
+    configure_repository "$maintainer" 'Maintainer' 'maintainer@example.invalid'
+
+    git -C "$developer_a" switch --quiet --no-track -c feature/add-priority origin/main
+    cat > "$developer_a/config/task-fields.yml" <<'CONFIG'
+fields:
+  - title
+  - status
+  - priority
+CONFIG
+    "$developer_a/scripts/check.sh" >/dev/null
+    git -C "$developer_a" add config/task-fields.yml
+    git -C "$developer_a" commit -m 'feat: add priority field' >/dev/null
+    git -C "$developer_a" push --quiet -u origin HEAD
+
+    git -C "$developer_b" switch --quiet --no-track -c feature/add-assignee origin/main
+    cat > "$developer_b/config/task-fields.yml" <<'CONFIG'
+fields:
+  - title
+  - status
+  - assignee
+CONFIG
+    "$developer_b/scripts/check.sh" >/dev/null
+    git -C "$developer_b" add config/task-fields.yml
+    git -C "$developer_b" commit -m 'feat: add assignee field' >/dev/null
+    git -C "$developer_b" push --quiet -u origin HEAD
+
+    git -C "$maintainer" fetch --quiet origin
+    git -C "$maintainer" switch --quiet main
+    git -C "$maintainer" merge --quiet --ff-only origin/main
+    git -C "$maintainer" merge --no-ff origin/feature/add-priority \
+        -m 'merge: integrate priority field' >/dev/null
+    "$maintainer/scripts/check.sh" >/dev/null
+    git -C "$maintainer" push --quiet origin HEAD:main
+
+    git -C "$developer_a" fetch --quiet origin
+    git -C "$developer_b" fetch --quiet origin
+
+    finalize_clone_paths "$developer_a" "$FINAL_LAB_DIR/remotes/team-app.git"
+    finalize_clone_paths "$developer_b" "$FINAL_LAB_DIR/remotes/team-app.git"
+    finalize_clone_paths "$maintainer" "$FINAL_LAB_DIR/remotes/team-app.git"
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     parse_arguments "$@"
     assert_runtime_boundary
