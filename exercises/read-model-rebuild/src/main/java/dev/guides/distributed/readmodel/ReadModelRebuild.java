@@ -67,4 +67,56 @@ public final class ReadModelRebuild {
             return appliedEvents.size();
         }
     }
+
+    // [Implementation 4] 로그 위치와 조회 모델 적용 순서
+    // Runner가 현재 로그 위치와 Projection 적용 사이의 실행 순서를 관리합니다.
+    public static final class Runner {
+        private final EventLog log;
+        private final Projection projection;
+        private long checkpoint;
+
+        public Runner(EventLog log, Projection projection) {
+            this.log = log;
+            this.projection = projection;
+        }
+
+        // [Implementation 4-1] 적용 완료 후 체크포인트 전진
+        // Projection 적용이 끝난 뒤에만 checkpoint를 늘려 처리하지 않은 이벤트를 건너뛰지 않습니다.
+        public boolean processNext(
+            boolean crashBeforeApply,
+            boolean crashAfterApplyBeforeCheckpoint
+        ) {
+            if (checkpoint >= log.size()) {
+                return false;
+            }
+
+            Event event = log.at(checkpoint);
+            if (crashBeforeApply) {
+                throw new SimulatedCrashException("before apply");
+            }
+
+            projection.apply(event);
+            if (crashAfterApplyBeforeCheckpoint) {
+                throw new SimulatedCrashException("after apply before checkpoint");
+            }
+
+            checkpoint++;
+            return true;
+        }
+
+        // [Implementation 4-2] 전체 로그 재생
+        // 온라인 처리와 같은 processNext 경로를 로그 끝까지 반복해 새 Projection을 만듭니다.
+        public void replayAll() {
+            while (processNext(false, false)) {
+                // processNext가 현재 로그 끝에 도달하면 반복을 종료합니다.
+            }
+        }
+
+        public long checkpoint() {
+            return checkpoint;
+        }
+    }
+
+    private ReadModelRebuild() {
+    }
 }
