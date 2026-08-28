@@ -12,6 +12,7 @@ public final class ReservationFlowTest {
         projectionOrderingSchemaAndTerminalRulesHold();
         authoritativeReconciliationPreservesUnknownAndNextAction();
         endToEndConvergencePreservesIdentifiersAndEvidence();
+        dispatcherBoundsQueueSlotsAndDeadlines();
         conflictingIdentitiesAreRejectedBeforeMutation();
         rejectionAndPendingStatesHaveDistinctConvergenceMeaning();
         System.out.println("reservation-flow tests passed");
@@ -348,6 +349,97 @@ public final class ReservationFlowTest {
                 .anyMatch(observation -> "corr-e2e".equals(observation.correlationId())),
             "The flow must retain correlation evidence"
         );
+    }
+
+    private static void dispatcherBoundsQueueSlotsAndDeadlines() {
+        ReservationFlow.SystemUnderTest system =
+            new ReservationFlow.SystemUnderTest(4, 2);
+        ReservationFlow.Dispatcher dispatcher =
+            new ReservationFlow.Dispatcher(system, 1, 1);
+        ReservationFlow.DispatchTask first = new ReservationFlow.DispatchTask(
+            "op-dispatch",
+            "corr-dispatch",
+            1,
+            100
+        );
+
+        dispatcher.enqueue(first, 10);
+        Checks.throwsType(
+            ReservationFlow.Overloaded.class,
+            () -> dispatcher.enqueue(
+                new ReservationFlow.DispatchTask(
+                    "op-overflow", "corr-overflow", 1, 100
+                ),
+                10
+            ),
+            "Queue capacity must reject excess work"
+        );
+        Checks.equals(0, system.reservations().reservationCount(),
+            "Queue rejection must occur before system mutation");
+
+        ReservationFlow.DispatchTask running = dispatcher.beginNext(20);
+        dispatcher.enqueue(
+            new ReservationFlow.DispatchTask(
+                "op-expired", "corr-expired", 1, 50
+            ),
+            20
+        );
+        Checks.throwsType(
+            ReservationFlow.Overloaded.class,
+            () -> dispatcher.beginNext(20),
+            "Running capacity must reject another acquisition"
+        );
+        Checks.equals(1, dispatcher.queuedCount(),
+            "Running-capacity rejection must preserve queued work");
+
+        ReservationFlow.CommandResult accepted = dispatcher.execute(running, 20);
+        ReservationFlow.CommandResult retry = dispatcher.execute(running, 20);
+        Checks.equals(accepted, retry,
+            "Repeated execution must preserve operation identity and result");
+        dispatcher.complete(running);
+        Checks.throwsType(
+            ReservationFlow.DeadlineExceeded.class,
+            () -> dispatcher.beginNext(50),
+            "An expired queued task must not start"
+        );
+        Checks.equals(0, dispatcher.runningCount(),
+            "Expired work must not consume a running slot");
+        Checks.equals(0, dispatcher.queuedCount(),
+            "Expired work must be removed from the queue");
+
+        ReservationFlow.Dispatcher duplicates =
+            new ReservationFlow.Dispatcher(system, 2, 3);
+        ReservationFlow.DispatchTask duplicate = new ReservationFlow.DispatchTask(
+            "op-duplicate-running",
+            "corr-duplicate-running",
+            1,
+            100
+        );
+        duplicates.enqueue(duplicate, 10);
+        duplicates.enqueue(duplicate, 10);
+        duplicates.enqueue(
+            new ReservationFlow.DispatchTask("op-third", "corr-third", 1, 100),
+            10
+        );
+        ReservationFlow.DispatchTask duplicateFirst = duplicates.beginNext(20);
+        ReservationFlow.DispatchTask duplicateSecond = duplicates.beginNext(20);
+        Checks.equals(2, duplicates.runningCount(),
+            "Each duplicate task occurrence must consume a slot");
+        Checks.throwsType(
+            ReservationFlow.Overloaded.class,
+            () -> duplicates.beginNext(20),
+            "Duplicate operation identity must not bypass the running limit"
+        );
+        Checks.equals(1, duplicates.queuedCount(),
+            "A running-limit rejection must retain the next task");
+        duplicates.complete(duplicateFirst);
+        ReservationFlow.DispatchTask third = duplicates.beginNext(20);
+        Checks.equals("op-third", third.operationId(),
+            "Releasing a slot must allow the retained next task");
+        duplicates.complete(duplicateSecond);
+        duplicates.complete(third);
+        Checks.equals(0, duplicates.runningCount(),
+            "Every acquired slot must be releasable exactly once");
     }
 
     private static void conflictingIdentitiesAreRejectedBeforeMutation() {

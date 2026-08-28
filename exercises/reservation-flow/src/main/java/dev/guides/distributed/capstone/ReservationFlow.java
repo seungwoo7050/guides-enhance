@@ -1,11 +1,13 @@
 package dev.guides.distributed.capstone;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.Queue;
 import java.util.TreeMap;
 
 public final class ReservationFlow {
@@ -935,5 +937,96 @@ public final class ReservationFlow {
         public QueryService query() {
             return query;
         }
+    }
+
+    // [Implementation 9] 실행·대기 수를 제한하는 Dispatcher
+    // Dispatcher가 대기 작업, 실행 자리 수와 각 작업의 deadline을 보관합니다.
+    public static final class Dispatcher {
+        private final SystemUnderTest system;
+        private final int maxRunning;
+        private final int maxQueued;
+        private final Queue<DispatchTask> queued = new ArrayDeque<>();
+        private final Map<DispatchTask, Integer> runningTasks = new HashMap<>();
+        private int runningCount;
+
+        public Dispatcher(SystemUnderTest system, int maxRunning, int maxQueued) {
+            if (system == null || maxRunning <= 0 || maxQueued <= 0) {
+                throw new IllegalArgumentException("dispatcher limits must be positive");
+            }
+            this.system = system;
+            this.maxRunning = maxRunning;
+            this.maxQueued = maxQueued;
+        }
+
+        // [Implementation 9-1] 대기열 접수
+        // deadline과 대기열 상한을 통과한 작업만 queue에 넣습니다.
+        public void enqueue(DispatchTask task, long nowMillis) {
+            if (task == null || nowMillis >= task.deadlineMillis()) {
+                throw new DeadlineExceeded();
+            }
+            if (queued.size() >= maxQueued) {
+                throw new Overloaded();
+            }
+            queued.add(task);
+        }
+
+        // [Implementation 9-2] 실행 자리 확보
+        // 실행 상한을 넘지 않으면서 유효한 대기 작업 하나에 자리 하나를 배정합니다.
+        public DispatchTask beginNext(long nowMillis) {
+            if (runningCount >= maxRunning) {
+                throw new Overloaded();
+            }
+            DispatchTask task = queued.poll();
+            if (task == null) {
+                return null;
+            }
+            if (nowMillis >= task.deadlineMillis()) {
+                throw new DeadlineExceeded();
+            }
+            runningTasks.merge(task, 1, Integer::sum);
+            runningCount++;
+            return task;
+        }
+
+        // [Implementation 9-3] 기존 식별자와 deadline을 보존한 실행
+        // 처음 받은 operation ID, correlation ID, quantity와 deadline을 그대로 submit에 전달합니다.
+        public CommandResult execute(DispatchTask task, long nowMillis) {
+            if (runningTasks.getOrDefault(task, 0) == 0) {
+                throw new IllegalStateException("dispatch task is not running");
+            }
+            return system.submit(
+                task.operationId(),
+                task.correlationId(),
+                task.quantity(),
+                nowMillis,
+                task.deadlineMillis()
+            );
+        }
+
+        // [Implementation 9-4] 실행 자리 반환
+        // 완료한 작업 한 건에 해당하는 실행 자리 하나만 반환합니다.
+        public void complete(DispatchTask task) {
+            int count = runningTasks.getOrDefault(task, 0);
+            if (count == 0) {
+                throw new IllegalStateException("dispatch task is not running");
+            }
+            if (count == 1) {
+                runningTasks.remove(task);
+            } else {
+                runningTasks.put(task, count - 1);
+            }
+            runningCount--;
+        }
+
+        public int queuedCount() {
+            return queued.size();
+        }
+
+        public int runningCount() {
+            return runningCount;
+        }
+    }
+
+    private ReservationFlow() {
     }
 }
