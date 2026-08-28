@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import struct
+from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Literal
 
@@ -300,3 +301,217 @@ class LogManager:
 
     def durable_records(self) -> list[LogRecord]:
         return [record for record in self.records if record.lsn <= self.flushed_lsn]
+
+
+# [Implementation 5] frame과 page table로 resident page를 관리합니다.
+# 같은 page_id는 한 frame에만 올라가며 Clock hand가 다음 교체 후보를 가리킵니다.
+@dataclass
+class Frame:
+    page: SlottedPage | None = None
+    pin_count: int = 0
+    dirty: bool = False
+    referenced: bool = False
+
+
+class BufferPool:
+    def __init__(self, disk: DiskManager, log: LogManager, capacity: int = 2) -> None:
+        if isinstance(capacity, bool) or not isinstance(capacity, int):
+            raise TypeError("capacity must be int")
+        if capacity <= 0:
+            raise ValueError("capacity must be positive")
+        self.disk = disk
+        self.log = log
+        self.frames = [Frame() for _ in range(capacity)]
+        self.page_table: dict[int, int] = {}
+        self.hand = 0
+
+    # [Implementation 5-1] 새 page를 검증한 뒤 Clock 방식으로 frame을 교체합니다.
+    # 읽기나 직렬화가 실패하면 기존 mapping을 유지하고, dirty victim은 먼저 flush합니다.
+    def fetch(self, page_id: int) -> SlottedPage:
+        resident = self.page_table.get(page_id)
+        if resident is not None:
+            frame = self.frames[resident]
+            frame.pin_count += 1
+            frame.referenced = True
+            assert frame.page is not None
+            return frame.page
+
+        incoming = self.disk.read(page_id)
+        index = self._victim()
+        frame = self.frames[index]
+        if frame.page is not None:
+            self._flush_frame(frame)
+            del self.page_table[frame.page.page_id]
+        frame.page = incoming
+        frame.pin_count = 1
+        frame.dirty = False
+        frame.referenced = True
+        self.page_table[page_id] = index
+        return incoming
+
+    def _victim(self) -> int:
+        for index, frame in enumerate(self.frames):
+            if frame.page is None:
+                self.hand = (index + 1) % len(self.frames)
+                return index
+        for _ in range(len(self.frames) * 2):
+            index = self.hand
+            frame = self.frames[index]
+            self.hand = (self.hand + 1) % len(self.frames)
+            if frame.pin_count > 0:
+                continue
+            if frame.referenced:
+                frame.referenced = False
+                continue
+            return index
+        raise RuntimeError("all buffer frames are pinned or recently referenced")
+
+    def unpin(self, page_id: int, *, dirty: bool = False) -> None:
+        try:
+            frame = self.frames[self.page_table[page_id]]
+        except KeyError as exc:
+            raise KeyError(page_id) from exc
+        if frame.pin_count == 0:
+            raise RuntimeError("page is already unpinned")
+        frame.pin_count -= 1
+        frame.dirty = frame.dirty or dirty
+
+    # [Implementation 5-2] page_lsn까지 WAL이 durable한 dirty page만 flush합니다.
+    # 전체 page write가 성공한 뒤에만 dirty를 false로 바꿉니다.
+    def _flush_frame(self, frame: Frame) -> None:
+        if frame.page is None or not frame.dirty:
+            return
+        if frame.page.page_lsn > self.log.flushed_lsn:
+            raise WALViolation("data page reached disk before its WAL record")
+        self.disk.write(frame.page)
+        frame.dirty = False
+
+    def flush(self, page_id: int) -> None:
+        try:
+            frame = self.frames[self.page_table[page_id]]
+        except KeyError as exc:
+            raise KeyError(page_id) from exc
+        self._flush_frame(frame)
+
+    def flush_all(self) -> None:
+        for frame in self.frames:
+            self._flush_frame(frame)
+
+
+# [Implementation 6] 정렬된 leaf 배열에서 key와 RID를 관리합니다.
+# key는 유일하며 leaf가 가득 차면 나누고, 각 key는 하나의 (page_id, slot_id)를 가리킵니다.
+class OrderedLeafIndex:
+    def __init__(self, leaf_capacity: int = 4) -> None:
+        if isinstance(leaf_capacity, bool) or not isinstance(leaf_capacity, int):
+            raise TypeError("leaf_capacity must be int")
+        if leaf_capacity < 2:
+            raise ValueError("leaf_capacity must be at least 2")
+        self.leaf_capacity = leaf_capacity
+        self.leaves: list[list[tuple[int, tuple[int, int]]]] = [[]]
+
+    def insert(self, key: int, rid: tuple[int, int]) -> None:
+        key = _validate_key(key)
+        if (
+            not isinstance(rid, tuple)
+            or len(rid) != 2
+            or any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in rid)
+        ):
+            raise TypeError("rid must be a pair of non-negative integers")
+        leaf_index = self._leaf_index(key)
+        leaf = self.leaves[leaf_index]
+        position = bisect_left([item[0] for item in leaf], key)
+        if position < len(leaf) and leaf[position][0] == key:
+            raise DuplicateKeyError(key)
+        leaf.insert(position, (key, rid))
+        if len(leaf) > self.leaf_capacity:
+            split = len(leaf) // 2
+            self.leaves.insert(leaf_index + 1, leaf[split:])
+            del leaf[split:]
+
+    def _leaf_index(self, key: int) -> int:
+        for index, leaf in enumerate(self.leaves):
+            if not leaf or key <= leaf[-1][0]:
+                return index
+        return len(self.leaves) - 1
+
+    def get(self, key: int) -> tuple[int, int]:
+        key = _validate_key(key)
+        leaf = self.leaves[self._leaf_index(key)]
+        position = bisect_left([item[0] for item in leaf], key)
+        if position == len(leaf) or leaf[position][0] != key:
+            raise KeyError(key)
+        return leaf[position][1]
+
+    def range(self, start: int, end: int) -> list[tuple[int, tuple[int, int]]]:
+        start = _validate_key(start)
+        end = _validate_key(end)
+        if start > end:
+            return []
+        return [item for leaf in self.leaves for item in leaf if start <= item[0] <= end]
+
+    def validate(self) -> None:
+        if not self.leaves:
+            raise AssertionError("index must retain one leaf")
+        flattened: list[int] = []
+        for index, leaf in enumerate(self.leaves):
+            if not leaf and len(self.leaves) > 1:
+                raise AssertionError("non-singleton index contains an empty leaf")
+            if len(leaf) > self.leaf_capacity:
+                raise AssertionError("leaf exceeds capacity")
+            keys = [key for key, _ in leaf]
+            if any(left >= right for left, right in zip(keys, keys[1:])):
+                raise AssertionError("leaf keys are not strictly increasing")
+            flattened.extend(keys)
+            if index and self.leaves[index - 1] and leaf:
+                if self.leaves[index - 1][-1][0] >= leaf[0][0]:
+                    raise AssertionError("leaf ranges overlap")
+        if len(flattened) != len(set(flattened)):
+            raise AssertionError("duplicate key in index")
+
+
+# [Implementation 7] disk, WAL, buffer, index를 조합하고 다음 txid를 관리합니다.
+# MiniStorageEngine이 한 insert를 구성 요소별 호출 순서로 묶습니다.
+class MiniStorageEngine:
+    def __init__(
+        self,
+        disk: DiskManager | None = None,
+        log: LogManager | None = None,
+        *,
+        buffer_capacity: int = 2,
+    ) -> None:
+        self.disk = disk or DiskManager()
+        self.log = log or LogManager()
+        self.buffer = BufferPool(self.disk, self.log, buffer_capacity)
+        self.index = OrderedLeafIndex()
+        self._next_txid = max((record.txid for record in self.log.records), default=0) + 1
+        if not self.disk.page_ids:
+            self.disk.allocate()
+        self._rebuild_index()
+
+    # [Implementation 7-1] durable heap의 live record를 읽어 index를 다시 만듭니다.
+    # index 자체는 저장하지 않으며, 복구 뒤 page의 실제 RID를 기준으로 재생성합니다.
+    def _rebuild_index(self) -> None:
+        rebuilt = OrderedLeafIndex()
+        for page_id in self.disk.page_ids:
+            page = self.disk.read(page_id)
+            for slot_id, key, _ in page.records():
+                rebuilt.insert(key, (page_id, slot_id))
+        rebuilt.validate()
+        self.index = rebuilt
+
+    # [Implementation 7-2] page를 하나씩 확인하고 반드시 unpin한 뒤 삽입 대상을 정합니다.
+    # 기존 page에 공간이 없을 때만 새 page_id를 할당합니다.
+    def _choose_page(self, value: bytes) -> int:
+        needed = RECORD_HEADER.size + len(value) + PAGE_SLOT.size
+        empty_capacity = self.disk.page_size - PAGE_HEADER.size
+        if needed > empty_capacity:
+            raise PageFull("record does not fit in an empty page")
+        for page_id in self.disk.page_ids:
+            page = self.buffer.fetch(page_id)
+            try:
+                fits = page.free_space >= needed
+            finally:
+                self.buffer.unpin(page_id)
+            if fits:
+                return page_id
+        return self.disk.allocate()
