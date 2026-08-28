@@ -1,0 +1,37 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 로그와 임시 상태
+*.log
+*.pid
+*.tmp
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+.venv/
+*.py[cod]
+.coverage
+htmlcov/
+
+# 가이드 준비·검증 상태
+.guide/
+.verify/
+
+# 수동 패킷 캡처 증거는 검증이 삭제하지 않습니다
+/exercises/packet-observation/capture.txt
+
+# 생성한 실습 작업 공간
+workspace/
+**/workspace/
+**/.workspace-create.lock/
+**/.workspace-copy.*/
