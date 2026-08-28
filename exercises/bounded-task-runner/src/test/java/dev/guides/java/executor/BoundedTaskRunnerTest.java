@@ -8,6 +8,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 
 class BoundedTaskRunnerTest {
@@ -44,6 +45,31 @@ class BoundedTaskRunnerTest {
       assertThatThrownBy(future::get)
           .isInstanceOf(ExecutionException.class)
           .hasCauseInstanceOf(IllegalStateException.class);
+    }
+  }
+
+  @Test
+  void cancelsTimedOutTaskWithInterrupt() throws Exception {
+    CountDownLatch started = new CountDownLatch(1);
+    CountDownLatch interrupted = new CountDownLatch(1);
+    try (BoundedTaskRunner runner = new BoundedTaskRunner(1, 1, Duration.ofSeconds(1))) {
+      assertThatThrownBy(
+              () ->
+                  runner.run(
+                      () -> {
+                        started.countDown();
+                        try {
+                          new CountDownLatch(1).await();
+                        } catch (InterruptedException exception) {
+                          interrupted.countDown();
+                          throw exception;
+                        }
+                        return "unreachable";
+                      },
+                      Duration.ofMillis(50)))
+          .isInstanceOf(TimeoutException.class);
+      assertThat(started.await(1, TimeUnit.SECONDS)).isTrue();
+      assertThat(interrupted.await(1, TimeUnit.SECONDS)).isTrue();
     }
   }
 

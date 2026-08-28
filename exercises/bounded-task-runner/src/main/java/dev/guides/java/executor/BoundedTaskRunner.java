@@ -4,10 +4,12 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class BoundedTaskRunner implements AutoCloseable {
@@ -46,6 +48,24 @@ public final class BoundedTaskRunner implements AutoCloseable {
   // [Implementation 2] 작업 제출 결과와 포화 거절을 호출자에게 그대로 반환합니다.
   public <T> Future<T> submit(Callable<T> task) throws RejectedExecutionException {
     return executor.submit(Objects.requireNonNull(task, "task is required"));
+  }
+
+  // [Implementation 3] 제한 시간을 넘긴 Future에 인터럽트 취소를 요청합니다.
+  public <T> T run(Callable<T> task, Duration timeout)
+      throws InterruptedException, ExecutionException, TimeoutException {
+    Objects.requireNonNull(timeout, "task timeout is required");
+    if (timeout.isNegative()) {
+      throw new IllegalArgumentException("task timeout must not be negative");
+    }
+
+    Future<T> future = submit(task);
+    try {
+      return future.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+    } catch (TimeoutException exception) {
+      // 시간 초과를 반환하는 것만으로 작업이 멈추지 않으므로 인터럽트도 요청합니다.
+      future.cancel(true);
+      throw exception;
+    }
   }
 
   @Override
