@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "processor-model"
+version = "1.0.0"
+description = "프로세서 상태 변화와 추적 입력을 재현하는 독립 실행형 모델"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+processor-model = "processor_model.cli:main"
+
+[tool.setuptools]
+packages = ["processor_model"]
