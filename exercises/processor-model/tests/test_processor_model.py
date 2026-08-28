@@ -4,7 +4,7 @@ import sys
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from processor_model import bits, control, isa, perf, pipeline
+from processor_model import bits, cache, control, isa, perf, pipeline
 
 class BitsTests(unittest.TestCase):
 
@@ -105,5 +105,20 @@ class PipelineTests(unittest.TestCase):
     def test_taken_annotation_requires_control_instruction(self) -> None:
         with self.assertRaises(ValueError):
             isa.parse_pipeline_trace(['add r1, r2, r3 @taken'])
+
+class CacheTests(unittest.TestCase):
+
+    def test_three_c_classification_sums_to_misses(self) -> None:
+        accesses = cache.parse_trace((ROOT / 'fixtures/traces/cache.trace').read_text(encoding='utf-8').splitlines())
+        result = cache.CacheSimulator(16, 4, 1).run(accesses)
+        classified = result['compulsory_misses'] + result['conflict_misses'] + result['capacity_misses']
+        self.assertEqual(classified, result['misses'])
+        self.assertGreater(result['conflict_misses'], 0)
+        self.assertGreater(result['capacity_misses'], 0)
+
+    def test_dirty_eviction_writes_back(self) -> None:
+        accesses = cache.parse_trace(['W 0', 'W 16'])
+        result = cache.CacheSimulator(16, 4, 1).run(accesses)
+        self.assertEqual(result['writebacks'], 1)
 if __name__ == '__main__':
     unittest.main()
