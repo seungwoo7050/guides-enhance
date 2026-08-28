@@ -1,0 +1,53 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 로그와 임시 상태
+*.log
+*.pid
+*.tmp
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# Node.js와 브라우저 검사
+node_modules/
+**/node_modules/
+**/next-env.d.ts
+.next/
+**/.next/
+coverage/
+**/coverage/
+playwright-report/
+**/playwright-report/
+test-results/
+**/test-results/
+*.tsbuildinfo
+
+# prepare/verify 산출물
+/.guide-tools/
+.guide-tools/
+/.guide-tmp/
+**/.guide-tmp/
+/.guide-prepare.env
+/.pnpm-store/
+.pnpm-store/
+/.turbo/
+.turbo/
+/verify.log
+/tree.txt
+
+# 학습자 전용 workspace (canonical skeleton/reference와 분리)
+/exercises/00-first-web-app/work/
+/exercises/01-runtime/work/
+/exercises/02-browser/work/
+/exercises/03-react-nextjs/work/
+/exercises/04-fastify-zod-api/work/
+/exercises/05-postgresql-kysely/work/
+/exercises/06-security/work/
+/exercises/07-websocket/work/
+/exercises/08-testing/work/
+/exercises/collaboration-board/work/
