@@ -66,3 +66,63 @@ cleanup_topology() {
     [ "$OWN_LEFT_LINK" -eq 0 ] || ip link del "$CLIENT_LINK" 2>/dev/null || true
     [ "$OWN_RIGHT_LINK" -eq 0 ] || ip link del "$ROUTER_RIGHT_LINK" 2>/dev/null || true
 }
+
+# [Implementation 3] Namespace and veth creation
+# veth를 네임스페이스로 옮기면 루트 네임스페이스에서 직접 지울 수 없으므로 소유 표시를 해제합니다.
+create_links() {
+    assert_names_available
+    ip netns add "$CLIENT"
+    OWN_CLIENT=1
+    ip netns add "$ROUTER"
+    OWN_ROUTER=1
+    ip netns add "$SERVER"
+    OWN_SERVER=1
+
+    ip link add "$CLIENT_LINK" type veth peer name "$ROUTER_LEFT_LINK"
+    OWN_LEFT_LINK=1
+    ip link add "$ROUTER_RIGHT_LINK" type veth peer name "$SERVER_LINK"
+    OWN_RIGHT_LINK=1
+
+    ip link set "$CLIENT_LINK" netns "$CLIENT"
+    OWN_LEFT_LINK=0
+    ip link set "$ROUTER_LEFT_LINK" netns "$ROUTER"
+    ip link set "$ROUTER_RIGHT_LINK" netns "$ROUTER"
+    OWN_RIGHT_LINK=0
+    ip link set "$SERVER_LINK" netns "$SERVER"
+
+    ip -n "$CLIENT" link set "$CLIENT_LINK" name c0
+    ip -n "$ROUTER" link set "$ROUTER_LEFT_LINK" name r0
+    ip -n "$ROUTER" link set "$ROUTER_RIGHT_LINK" name r1
+    ip -n "$SERVER" link set "$SERVER_LINK" name s0
+
+    for namespace in "$CLIENT" "$ROUTER" "$SERVER"; do
+        ip -n "$namespace" link set lo up
+    done
+    ip -n "$CLIENT" link set c0 up
+    ip -n "$ROUTER" link set r0 up
+    ip -n "$ROUTER" link set r1 up
+    ip -n "$SERVER" link set s0 up
+}
+
+# [Implementation 3-1] Routed topology configuration
+configure_routed_topology() {
+    create_links
+    ip -n "$CLIENT" address add 10.201.1.2/24 dev c0
+    ip -n "$ROUTER" address add 10.201.1.1/24 dev r0
+    ip -n "$ROUTER" address add 10.201.2.1/24 dev r1
+    ip -n "$SERVER" address add 10.201.2.2/24 dev s0
+    ip -n "$CLIENT" route add default via 10.201.1.1
+    ip -n "$SERVER" route add default via 10.201.2.1
+    ip netns exec "$ROUTER" sysctl -q -w net.ipv4.ip_forward=1 >/dev/null
+}
+
+# [Implementation 3-2] SNAT topology configuration
+configure_nat_topology() {
+    create_links
+    ip -n "$CLIENT" address add 10.202.1.2/24 dev c0
+    ip -n "$ROUTER" address add 10.202.1.1/24 dev r0
+    ip -n "$ROUTER" address add 198.18.0.1/24 dev r1
+    ip -n "$SERVER" address add 198.18.0.2/24 dev s0
+    ip -n "$CLIENT" route add default via 10.202.1.1
+    ip netns exec "$ROUTER" sysctl -q -w net.ipv4.ip_forward=1 >/dev/null
+}
