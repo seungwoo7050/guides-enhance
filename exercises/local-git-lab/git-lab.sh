@@ -16,8 +16,26 @@ FINAL_EXISTED=0
 FINAL_IDENTITY=''
 
 usage() {
-    printf '%s\n' 'Usage: git-lab.sh [--reset] [sample|team|recovery|all]' \
-        'Validate the selected local lab target and runtime boundary.'
+    cat <<'USAGE'
+Usage:
+  ./git-lab.sh [sample|team|recovery|all]
+  ./git-lab.sh --reset [sample|team|recovery|all]
+
+Creates deterministic local Git repository topologies under ./lab.
+
+Commands:
+  (no arguments)            Create every topology.
+  sample                    Create the completed sample application topology.
+  team                      Create the divergent collaboration topology.
+  recovery                  Create the recovery reference topology.
+  all                       Create every topology.
+  --reset sample            Recreate only the sample topology.
+  --reset team              Recreate only the team topology.
+  --reset recovery          Recreate only the recovery topology.
+  --reset all               Recreate every topology.
+  --reset                   Same as --reset all.
+  -h, --help                Show this help.
+USAGE
 }
 
 # [Implementation 1]
@@ -691,7 +709,56 @@ hold_before_publish_for_tests() {
     fi
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+# [Implementation 9]
+# Requested topology execution and finalization
+main() {
     parse_arguments "$@"
     assert_runtime_boundary
-fi
+
+    trap cleanup EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+
+    acquire_lock
+
+    if [[ "$MODE" == create ]] && target_exists "$TARGET"; then
+        printf 'Selected topology already exists: %s\n' "$TARGET" >&2
+        printf 'Use ./git-lab.sh --reset %s only after confirming it may be replaced.\n' \
+            "$TARGET" >&2
+        exit 1
+    fi
+
+    begin_staged_transaction
+
+    case "$TARGET" in
+        sample)
+            create_sample_topology
+            ;;
+        team)
+            create_team_topology
+            ;;
+        recovery)
+            create_recovery_topology
+            ;;
+        all)
+            create_sample_topology
+            create_team_topology
+            create_recovery_topology
+            ;;
+    esac
+
+    hold_before_publish_for_tests
+    publish_staged_lab
+
+    LAB_DIR="$FINAL_LAB_DIR"
+    REMOTES_DIR="$LAB_DIR/remotes"
+    HOOKS_DIR="$LAB_DIR/.empty-hooks"
+    rmdir -- "$LOCK_DIR"
+    LOCK_HELD=0
+
+    printf 'Created local Git lab topology: %s\n' "$TARGET"
+    printf 'Lab directory: %s\n' "$LAB_DIR"
+}
+
+main "$@"
