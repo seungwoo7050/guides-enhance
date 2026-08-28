@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from itertools import combinations, product
 from pathlib import Path
 import random
@@ -13,7 +14,7 @@ sys.path.insert(0, str(SRC))
 from verified_algorithms.ranges import prefix_sums, range_sum, lower_bound
 from verified_algorithms.trees import RedBlackNode, red_black_height
 from verified_algorithms.optimization import knapsack_01, select_intervals, lcs_length
-from verified_algorithms.graphs import bfs_distances, dijkstra
+from verified_algorithms.graphs import bfs_distances, dijkstra, kruskal_mst
 def all_pairs_distances(
     size: int,
     edges: list[tuple[int, int, int]],
@@ -119,6 +120,69 @@ def complete_tree(colors: tuple[str, ...]) -> object:
     nodes[2].left, nodes[2].right = nodes[1], nodes[3]
     nodes[6].left, nodes[6].right = nodes[5], nodes[7]
     return nodes[4]
+
+
+def brute_mst_weight(
+    vertex_count: int,
+    edges: list[tuple[int, int, int]],
+) -> int:
+    if vertex_count == 0:
+        return 0
+    best: int | None = None
+    for chosen in combinations(edges, vertex_count - 1):
+        groups = list(range(vertex_count))
+
+        def find(vertex: int) -> int:
+            while groups[vertex] != vertex:
+                vertex = groups[vertex]
+            return vertex
+
+        acyclic = True
+        for source, target, _weight in chosen:
+            left_root, right_root = find(source), find(target)
+            if left_root == right_root:
+                acyclic = False
+                break
+            groups[right_root] = left_root
+        if acyclic and len({find(vertex) for vertex in range(vertex_count)}) == 1:
+            weight = sum(edge[2] for edge in chosen)
+            best = weight if best is None else min(best, weight)
+    if best is None:
+        raise ValueError("no spanning tree exists")
+    return best
+
+
+def canonical_undirected_edge(
+    edge: tuple[int, int, int],
+) -> tuple[int, int, int]:
+    source, target, weight = edge
+    return min(source, target), max(source, target), weight
+
+
+def is_spanning_tree(
+    vertex_count: int,
+    chosen: list[tuple[int, int, int]],
+) -> bool:
+    if vertex_count == 0:
+        return chosen == []
+    if len(chosen) != vertex_count - 1:
+        return False
+
+    groups = list(range(vertex_count))
+
+    def find(vertex: int) -> int:
+        while groups[vertex] != vertex:
+            vertex = groups[vertex]
+        return vertex
+
+    for source, target, _weight in chosen:
+        if not 0 <= source < vertex_count or not 0 <= target < vertex_count:
+            return False
+        left_root, right_root = find(source), find(target)
+        if left_root == right_root:
+            return False
+        groups[right_root] = left_root
+    return len({find(vertex) for vertex in range(vertex_count)}) == 1
 
 
 def brute_lcs_length(left: str, right: str) -> int:
@@ -332,6 +396,41 @@ class GraphTests(unittest.TestCase):
             dijkstra(2, [(0, 1, -1)], 0)
         with self.assertRaises(ValueError):
             dijkstra(2, [(0, 2, 1)], 0)
+
+    def test_kruskal_matches_spanning_tree_enumeration(self) -> None:
+        self.assertEqual(kruskal_mst(0, []), (0, []))
+        source = random.Random(20250215)
+        for _ in range(40):
+            size = 5
+            edges = [
+                (vertex - 1, vertex, source.randrange(1, 15))
+                for vertex in range(1, size)
+            ]
+            present = {(edge[0], edge[1]) for edge in edges}
+            edges.extend(
+                (left, right, source.randrange(1, 15))
+                for left in range(size)
+                for right in range(left + 1, size)
+                if (left, right) not in present and source.random() < 0.35
+            )
+            weight, chosen = kruskal_mst(size, iter(edges))
+            self.assertEqual(weight, brute_mst_weight(size, edges))
+            self.assertEqual(len(chosen), size - 1)
+            available = Counter(
+                canonical_undirected_edge(edge)
+                for edge in edges
+            )
+            returned = Counter(
+                canonical_undirected_edge(edge)
+                for edge in chosen
+            )
+            self.assertFalse(returned - available)
+            self.assertEqual(weight, sum(edge[2] for edge in chosen))
+            self.assertTrue(is_spanning_tree(size, chosen))
+
+    def test_kruskal_rejects_disconnected_graph(self) -> None:
+        with self.assertRaises(ValueError):
+            kruskal_mst(4, [(0, 1, 1), (2, 3, 1)])
 
 
 if __name__ == "__main__":

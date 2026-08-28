@@ -1,4 +1,4 @@
-"""Graph traversal and nonnegative shortest paths."""
+"""Graph traversal, nonnegative shortest paths, and minimum spanning trees."""
 
 from __future__ import annotations
 
@@ -75,3 +75,67 @@ def dijkstra(
                 distances[target] = candidate
                 heapq.heappush(queue, (candidate, target))
     return distances
+
+
+# [Implementation 9]
+# Disjoint-set MST certificate
+class _DisjointSet:
+    def __init__(self, size: int) -> None:
+        self.parent = list(range(size))
+        self.component_size = [1] * size
+
+    def find(self, vertex: int) -> int:
+        root = vertex
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[vertex] != vertex:
+            parent = self.parent[vertex]
+            self.parent[vertex] = root
+            vertex = parent
+        return root
+
+    def union(self, left: int, right: int) -> bool:
+        left_root = self.find(left)
+        right_root = self.find(right)
+        if left_root == right_root:
+            return False
+        if self.component_size[left_root] < self.component_size[right_root]:
+            left_root, right_root = right_root, left_root
+        self.parent[right_root] = left_root
+        self.component_size[left_root] += self.component_size[right_root]
+        return True
+
+
+def kruskal_mst(
+    vertex_count: int,
+    edges: Iterable[tuple[int, int, int]],
+) -> tuple[int, list[tuple[int, int, int]]]:
+    """Return total weight and selected edges of an undirected MST."""
+    if vertex_count < 0:
+        raise ValueError("vertex_count cannot be negative")
+    if vertex_count == 0:
+        return 0, []
+
+    normalized: list[tuple[int, int, int]] = []
+    for source, target, weight in edges:
+        _validate_vertex(vertex_count, source)
+        _validate_vertex(vertex_count, target)
+        normalized.append((source, target, weight))
+
+    groups = _DisjointSet(vertex_count)
+    chosen: list[tuple[int, int, int]] = []
+    total_weight = 0
+    for source, target, weight in sorted(
+        normalized,
+        key=lambda edge: (edge[2], edge[0], edge[1]),
+    ):
+        if groups.union(source, target):
+            # 서로 다른 component를 실제로 합친 간선만 넣어야 선택 결과에 cycle이 생기지 않습니다.
+            chosen.append((source, target, weight))
+            total_weight += weight
+            if len(chosen) == vertex_count - 1:
+                break
+
+    if len(chosen) != vertex_count - 1:
+        raise ValueError("the graph is disconnected")
+    return total_weight, chosen
