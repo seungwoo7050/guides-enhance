@@ -14,7 +14,7 @@ sys.path.insert(0, str(SRC))
 from verified_algorithms.ranges import prefix_sums, range_sum, lower_bound
 from verified_algorithms.trees import RedBlackNode, red_black_height
 from verified_algorithms.optimization import knapsack_01, select_intervals, lcs_length
-from verified_algorithms.graphs import bfs_distances, dijkstra, kruskal_mst, bellman_ford
+from verified_algorithms.graphs import bfs_distances, dijkstra, kruskal_mst, bellman_ford, max_flow
 def all_pairs_distances(
     size: int,
     edges: list[tuple[int, int, int]],
@@ -183,6 +183,77 @@ def is_spanning_tree(
             return False
         groups[right_root] = left_root
     return len({find(vertex) for vertex in range(vertex_count)}) == 1
+
+
+def brute_min_cut(capacity: list[list[int]], source: int, sink: int) -> int:
+    vertices = [
+        vertex
+        for vertex in range(len(capacity))
+        if vertex not in {source, sink}
+    ]
+    best: int | None = None
+    for mask in range(1 << len(vertices)):
+        source_side = {source}
+        source_side.update(
+            vertex
+            for index, vertex in enumerate(vertices)
+            if mask & (1 << index)
+        )
+        cut = sum(
+            capacity[left][right]
+            for left in source_side
+            for right in range(len(capacity))
+            if right not in source_side
+        )
+        best = cut if best is None else min(best, cut)
+    assert best is not None
+    return best
+
+
+def flow_certificate_errors(
+    capacity: list[list[int]],
+    source: int,
+    sink: int,
+    value: int,
+    flow: list[list[int]],
+) -> list[str]:
+    size = len(capacity)
+    errors: list[str] = []
+    if not isinstance(value, int):
+        errors.append("flow value is not an integer")
+    if not isinstance(flow, list) or len(flow) != size:
+        return errors + ["flow row count differs from capacity"]
+    if any(not isinstance(row, list) or len(row) != size for row in flow):
+        return errors + ["flow is not a square matrix"]
+
+    for left in range(size):
+        for right in range(size):
+            amount = flow[left][right]
+            if not isinstance(amount, int):
+                errors.append(f"flow[{left}][{right}] is not an integer")
+            elif not 0 <= amount <= capacity[left][right]:
+                errors.append(f"flow[{left}][{right}] violates capacity")
+
+    if errors:
+        return errors
+    if source == sink:
+        if value != 0 or any(amount for row in flow for amount in row):
+            errors.append("source == sink did not return zero flow")
+        return errors
+
+    incoming = [
+        sum(flow[left][vertex] for left in range(size))
+        for vertex in range(size)
+    ]
+    outgoing = [sum(flow[vertex]) for vertex in range(size)]
+    if outgoing[source] - incoming[source] != value:
+        errors.append("source net outflow differs from value")
+    if incoming[sink] - outgoing[sink] != value:
+        errors.append("sink net inflow differs from value")
+    for vertex in range(size):
+        if vertex not in {source, sink} and incoming[vertex] != outgoing[vertex]:
+            errors.append(f"flow conservation fails at vertex {vertex}")
+    return errors
 
 
 def brute_lcs_length(left: str, right: str) -> int:
@@ -462,6 +533,54 @@ class GraphTests(unittest.TestCase):
     def test_kruskal_rejects_disconnected_graph(self) -> None:
         with self.assertRaises(ValueError):
             kruskal_mst(4, [(0, 1, 1), (2, 3, 1)])
+
+    def test_max_flow_value_and_certificate_match_all_cuts(self) -> None:
+        source = random.Random(20250222)
+        specific = [
+            [0, 3, 2, 0],
+            [0, 0, 1, 2],
+            [0, 0, 0, 3],
+            [0, 0, 0, 0],
+        ]
+        value, flow = max_flow(specific, 0, 3)
+        self.assertEqual(value, 5)
+        self.assertEqual(
+            flow_certificate_errors(specific, 0, 3, value, flow),
+            [],
+        )
+        for _ in range(50):
+            size = 6
+            capacity = [
+                [
+                    source.randrange(1, 9)
+                    if left != right and source.random() < 0.3
+                    else 0
+                    for right in range(size)
+                ]
+                for left in range(size)
+            ]
+            value, flow = max_flow(capacity, 0, size - 1)
+            self.assertEqual(
+                value,
+                brute_min_cut(capacity, 0, size - 1),
+            )
+            self.assertEqual(
+                flow_certificate_errors(
+                    capacity,
+                    0,
+                    size - 1,
+                    value,
+                    flow,
+                ),
+                [],
+            )
+
+    def test_max_flow_contract_errors(self) -> None:
+        with self.assertRaises(ValueError):
+            max_flow([[0, 1], [0]], 0, 1)
+        with self.assertRaises(ValueError):
+            max_flow([[0, -1], [0, 0]], 0, 1)
+        self.assertEqual(max_flow([[0]], 0, 0), (0, [[0]]))
 
 
 if __name__ == "__main__":

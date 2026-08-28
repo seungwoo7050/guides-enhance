@@ -1,4 +1,4 @@
-"""Graph traversal, shortest paths, and minimum spanning trees."""
+"""Traversal, shortest-path, spanning-tree, and flow algorithms."""
 
 from __future__ import annotations
 
@@ -180,3 +180,73 @@ def bellman_ford(
         if distances[target] is None or candidate < distances[target]:
             raise ValueError("a negative-weight cycle is reachable from start")
     return distances
+
+
+# [Implementation 11]
+# Directed max-flow certificate
+def max_flow(
+    capacity: Sequence[Sequence[int]],
+    source: int,
+    sink: int,
+) -> tuple[int, list[list[int]]]:
+    """Return maximum-flow value and a directed flow matrix certificate."""
+    size = len(capacity)
+    if any(len(row) != size for row in capacity):
+        raise ValueError("capacity must be a square matrix")
+    if any(value < 0 for row in capacity for value in row):
+        raise ValueError("capacity values cannot be negative")
+    _validate_vertex(size, source)
+    _validate_vertex(size, sink)
+
+    flow = [[0] * size for _ in range(size)]
+    if source == sink:
+        return 0, flow
+
+    total = 0
+    while True:
+        parent: list[int | None] = [None] * size
+        parent[source] = source
+        queue: deque[int] = deque([source])
+        while queue and parent[sink] is None:
+            vertex = queue.popleft()
+            for target in range(size):
+                remaining = (
+                    capacity[vertex][target]
+                    - flow[vertex][target]
+                    + flow[target][vertex]
+                )
+                if remaining > 0 and parent[target] is None:
+                    parent[target] = vertex
+                    queue.append(target)
+                    if target == sink:
+                        break
+        if parent[sink] is None:
+            return total, flow
+
+        amount: int | None = None
+        vertex = sink
+        while vertex != source:
+            previous = parent[vertex]
+            assert previous is not None
+            residual_capacity = (
+                capacity[previous][vertex]
+                - flow[previous][vertex]
+                + flow[vertex][previous]
+            )
+            amount = (
+                residual_capacity if amount is None else min(amount, residual_capacity)
+            )
+            vertex = previous
+        assert amount is not None
+
+        vertex = sink
+        while vertex != source:
+            previous = parent[vertex]
+            assert previous is not None
+            # 반대 방향으로 이미 보낸 flow를 먼저 취소하고 남은 양만 정방향에 더합니다.
+            # 그래야 양방향 원본 간선이 있어도 각 방향의 flow가 해당 capacity를 넘지 않습니다.
+            cancelled = min(amount, flow[vertex][previous])
+            flow[vertex][previous] -= cancelled
+            flow[previous][vertex] += amount - cancelled
+            vertex = previous
+        total += amount
