@@ -7,9 +7,124 @@ import java.util.List;
 
 public final class ReservationFlowTest {
     public static void main(String[] args) {
+        idempotentSubmissionAndAdmissionRemainBounded();
+        brokerFailureAndCrashConvergeThroughRedelivery();
         projectionOrderingSchemaAndTerminalRulesHold();
+        authoritativeReconciliationPreservesUnknownAndNextAction();
+        endToEndConvergencePreservesIdentifiersAndEvidence();
         conflictingIdentitiesAreRejectedBeforeMutation();
+        rejectionAndPendingStatesHaveDistinctConvergenceMeaning();
         System.out.println("reservation-flow tests passed");
+    }
+
+    private static void idempotentSubmissionAndAdmissionRemainBounded() {
+        ReservationFlow.SystemUnderTest system =
+            new ReservationFlow.SystemUnderTest(2, 3);
+
+        ReservationFlow.CommandResult first =
+            system.submit("op-1", "corr-1", 1);
+        ReservationFlow.CommandResult retry =
+            system.submit("op-1", "corr-1", 1);
+
+        Checks.equals(first, retry, "A retry must return the existing command result");
+        Checks.equals(
+            1,
+            system.reservations().reservationCount(),
+            "A retry must not create another reservation"
+        );
+        Checks.equals(
+            1,
+            system.reservations().outboxCount(),
+            "A retry must not create another outbox event"
+        );
+        Checks.equals(
+            first,
+            system.reservations().findByOperation("op-1"),
+            "The operation lookup must recover the authoritative result"
+        );
+
+        Checks.throwsType(
+            IllegalArgumentException.class,
+            () -> system.submit("op-1", "corr-1", 2),
+            "The same operation ID must reject a different quantity"
+        );
+        Checks.throwsType(
+            IllegalArgumentException.class,
+            () -> system.submit("op-1", "corr-other", 1),
+            "The same operation ID must reject a different correlation ID"
+        );
+        Checks.equals(1, system.reservations().reservationCount(),
+            "Conflicting input must not mutate reservation state");
+
+        ReservationFlow.SystemUnderTest bounded =
+            new ReservationFlow.SystemUnderTest(1, 3);
+        bounded.submit("op-bounded-1", "corr-bounded-1", 1);
+        Checks.throwsType(
+            ReservationFlow.Overloaded.class,
+            () -> bounded.submit("op-bounded-2", "corr-bounded-2", 1),
+            "Pending admission must enforce its capacity"
+        );
+        Checks.equals(1, bounded.reservations().reservationCount(),
+            "Overload rejection must happen before mutation");
+        Checks.equals(1, bounded.reservations().outboxCount(),
+            "Overload rejection must not append an outbox record");
+
+        ReservationFlow.SystemUnderTest deadline =
+            new ReservationFlow.SystemUnderTest(1, 1);
+        Checks.throwsType(
+            ReservationFlow.DeadlineExceeded.class,
+            () -> deadline.submit("op-late", "corr-late", 1, 50, 50),
+            "Expired ingress must be rejected"
+        );
+        Checks.equals(0, deadline.reservations().reservationCount(),
+            "Expired ingress must not create state");
+    }
+
+    private static void brokerFailureAndCrashConvergeThroughRedelivery() {
+        ReservationFlow.SystemUnderTest system =
+            new ReservationFlow.SystemUnderTest(2, 1);
+        ReservationFlow.CommandResult command =
+            system.submit("op-redelivery", "corr-redelivery", 1);
+
+        system.broker().setAvailable(false);
+        Checks.throwsType(
+            ReservationFlow.BrokerUnavailable.class,
+            () -> system.publishPending(false),
+            "Broker failure must remain visible"
+        );
+        Checks.equals(1, system.reservations().pendingOutboxCount(),
+            "Failed delivery must leave pending outbox work");
+
+        system.broker().setAvailable(true);
+        Checks.throwsType(
+            ReservationFlow.SimulatedCrash.class,
+            () -> system.publishPending(true),
+            "A crash after send must be reproducible"
+        );
+        Checks.equals(1, system.reservations().pendingOutboxCount(),
+            "A crash before publication acknowledgement must preserve pending work");
+
+        system.publishPending(false);
+        List<ReservationFlow.Event> sent = system.brokerMessages();
+        Checks.equals(2, sent.size(), "The unacknowledged event must be redelivered");
+        Checks.equals(sent.get(0).eventId(), sent.get(1).eventId(),
+            "Redelivery must preserve event identity");
+
+        system.consumeInventoryRequests();
+        Checks.equals(1, system.inventory().allocationEffects(),
+            "Duplicate delivery must allocate inventory once");
+        Checks.equals(2, system.inventoryResults().size(),
+            "Both delivery attempts must remain observable");
+
+        system.applyInventoryResults();
+        Checks.equals(
+            ReservationFlow.Status.ACCEPTED,
+            system.reservations().status(command.reservationId()),
+            "The authoritative reservation must accept the inventory result"
+        );
+        Checks.equals(2, system.reservations().outboxCount(),
+            "Duplicate inventory results must create one status event"
+        );
     }
 
     private static void projectionOrderingSchemaAndTerminalRulesHold() {
@@ -112,6 +227,127 @@ public final class ReservationFlowTest {
             "Rebuild must converge even when history arrives out of order");
         Checks.equals(1, rebuilt.isolatedCount(),
             "Rebuild must preserve unsupported-schema isolation");
+    }
+
+    private static void authoritativeReconciliationPreservesUnknownAndNextAction() {
+        ReservationFlow.SystemUnderTest ageSystem =
+            new ReservationFlow.SystemUnderTest(3, 2);
+        ageSystem.submit("op-newer", "corr-newer", 1, 25, 100);
+        ageSystem.submit("op-older", "corr-older", 1, 10, 100);
+        Checks.equals(
+            30L,
+            ageSystem.reservations().oldestPendingOutboxAge(40).orElseThrow(),
+            "Outbox age must expose the oldest pending responsibility"
+        );
+        ageSystem.publishPending(false);
+        Checks.isTrue(
+            ageSystem.reservations().oldestPendingOutboxAge(40).isEmpty(),
+            "Published outbox records must disappear from pending-age evidence"
+        );
+
+        ReservationFlow.SystemUnderTest system =
+            new ReservationFlow.SystemUnderTest(3, 2);
+        ReservationFlow.CommandResult command =
+            system.submit("op-authoritative", "corr-authoritative", 1, 10, 100);
+        system.publishPending(false);
+        system.consumeInventoryRequests();
+
+        system.inventory().setLookupAvailable(false);
+        List<ReservationFlow.ReconciliationRecord> unavailable =
+            system.reconcilePending(50, 25);
+        Checks.equals(
+            ReservationFlow.ReconciliationOutcome.PENDING_SOURCE_UNAVAILABLE,
+            unavailable.get(0).outcome(),
+            "Unavailable authority must remain distinct from rejection"
+        );
+        Checks.equals(75L, unavailable.get(0).nextAttemptAtMillis(),
+            "Unavailable authority must record a next action time");
+        Checks.equals(
+            ReservationFlow.Status.UNKNOWN,
+            system.reservations().status(command.reservationId()),
+            "An indeterminate authoritative result must be UNKNOWN"
+        );
+
+        system.inventory().setLookupAvailable(true);
+        List<ReservationFlow.ReconciliationRecord> applied =
+            system.reconcilePending(75, 25);
+        Checks.equals(
+            ReservationFlow.ReconciliationOutcome.APPLIED,
+            applied.get(0).outcome(),
+            "A later authoritative lookup must apply the stored result"
+        );
+        Checks.equals(
+            List.of("op-authoritative", "op-authoritative"),
+            system.inventory().lookupOperations(),
+            "Reconciliation must preserve the original operation ID"
+        );
+        Checks.equals(ReservationFlow.Status.ACCEPTED,
+            system.reservations().status(command.reservationId()),
+            "Authoritative reconciliation must resolve UNKNOWN to ACCEPTED");
+
+        ReservationFlow.SystemUnderTest absent =
+            new ReservationFlow.SystemUnderTest(1, 1);
+        ReservationFlow.CommandResult pending =
+            absent.submit("op-absent", "corr-absent", 1, 5, 100);
+        absent.inventory().setLookupAvailable(false);
+        absent.reconcilePending(15, 5);
+        absent.inventory().setLookupAvailable(true);
+        List<ReservationFlow.ReconciliationRecord> notFound =
+            absent.reconcilePending(20, 10);
+        Checks.equals(
+            ReservationFlow.ReconciliationOutcome.PENDING_NOT_FOUND,
+            notFound.get(0).outcome(),
+            "A missing authoritative result must remain pending"
+        );
+        Checks.equals(30L, notFound.get(0).nextAttemptAtMillis(),
+            "A missing result must retain a next reconciliation time");
+        Checks.equals(ReservationFlow.Status.PENDING,
+            absent.reservations().status(pending.reservationId()),
+            "A missing result must not become success or rejection");
+    }
+
+    private static void endToEndConvergencePreservesIdentifiersAndEvidence() {
+        ReservationFlow.SystemUnderTest system =
+            new ReservationFlow.SystemUnderTest(2, 1);
+        ReservationFlow.CommandResult command =
+            system.submit("op-e2e", "corr-e2e", 1, 10, 100);
+        system.reconcile();
+
+        Checks.isTrue(system.converged(command.reservationId()),
+            "Recovery must converge authority, outbox, and projection");
+        Checks.equals(ReservationFlow.Status.ACCEPTED,
+            system.reservations().status(command.reservationId()),
+            "The authoritative result must be terminal");
+        Checks.equals(ReservationFlow.Status.ACCEPTED,
+            system.query().status(command.reservationId()),
+            "The projection must match authority");
+        Checks.equals(0, system.reservations().pendingOutboxCount(),
+            "Convergence requires no pending outbox records");
+
+        ReservationFlow.Event requested = system.brokerMessages().stream()
+            .filter(event -> event.kind() == ReservationFlow.Kind.RESERVATION_REQUESTED)
+            .findFirst()
+            .orElseThrow();
+        ReservationFlow.Event inventory = system.inventoryResults().get(0);
+        ReservationFlow.Event status = system.brokerMessages().stream()
+            .filter(event -> event.kind() == ReservationFlow.Kind.RESERVATION_ACCEPTED)
+            .findFirst()
+            .orElseThrow();
+        Checks.equals("corr-e2e", requested.correlationId(),
+            "The command correlation ID must reach the first event");
+        Checks.equals("op-e2e", requested.causationId(),
+            "The first event must identify the command operation");
+        Checks.equals(requested.eventId(), inventory.causationId(),
+            "The inventory result must identify its request event");
+        Checks.equals(inventory.eventId(), status.causationId(),
+            "The status event must identify its inventory result");
+        Checks.equals("corr-e2e", status.correlationId(),
+            "Correlation identity must survive every hop");
+        Checks.isTrue(
+            system.observations().stream()
+                .anyMatch(observation -> "corr-e2e".equals(observation.correlationId())),
+            "The flow must retain correlation evidence"
+        );
     }
 
     private static void conflictingIdentitiesAreRejectedBeforeMutation() {
@@ -223,4 +459,35 @@ public final class ReservationFlowTest {
             "A contradictory result must not alter authority");
     }
 
+    private static void rejectionAndPendingStatesHaveDistinctConvergenceMeaning() {
+        ReservationFlow.SystemUnderTest rejected =
+            new ReservationFlow.SystemUnderTest(2, 0);
+        ReservationFlow.CommandResult rejectedCommand =
+            rejected.submit("op-rejected", "corr-rejected", 1);
+        rejected.reconcile();
+        Checks.equals(ReservationFlow.Status.REJECTED,
+            rejected.reservations().status(rejectedCommand.reservationId()),
+            "Insufficient inventory must become an authoritative rejection");
+        Checks.equals(0, rejected.inventory().allocationEffects(),
+            "Rejected inventory must not create an allocation effect");
+        Checks.isTrue(rejected.converged(rejectedCommand.reservationId()),
+            "Matching terminal rejection with an empty outbox is convergence");
+
+        ReservationFlow.SystemUnderTest pending =
+            new ReservationFlow.SystemUnderTest(2, 1);
+        ReservationFlow.CommandResult pendingCommand =
+            pending.submit("op-pending", "corr-pending", 1);
+        pending.publishPending(false);
+        pending.query().consume(pending.brokerMessages().get(0));
+        Checks.equals(ReservationFlow.Status.PENDING,
+            pending.reservations().status(pendingCommand.reservationId()),
+            "Authority must remain pending before an inventory result");
+        Checks.equals(ReservationFlow.Status.PENDING,
+            pending.query().status(pendingCommand.reservationId()),
+            "The creation projection must also be pending");
+        Checks.equals(0, pending.reservations().pendingOutboxCount(),
+            "The first event may already be published");
+        Checks.isFalse(pending.converged(pendingCommand.reservationId()),
+            "Matching PENDING states are not terminal convergence");
+    }
 }

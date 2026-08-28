@@ -736,4 +736,204 @@ public final class ReservationFlow {
             }
         }
     }
+
+    // [Implementation 8] 서비스 조합과 복구 기록
+    // SystemUnderTest가 각 서비스를 연결하고 복구 과정에서 필요한 관찰값과 재조정 기록을 보관합니다.
+    public static final class SystemUnderTest {
+        private final ReservationService reservations;
+        private final InventoryService inventory;
+        private final Broker broker = new Broker();
+        private final Publisher publisher;
+        private final QueryService query = new QueryService();
+        private final List<Event> inventoryResults = new ArrayList<>();
+        private final List<Observation> observations = new ArrayList<>();
+        private final List<ReconciliationRecord> reconciliationRecords = new ArrayList<>();
+
+        public SystemUnderTest(int maxPending, int inventoryAvailable) {
+            reservations = new ReservationService(maxPending);
+            inventory = new InventoryService(inventoryAvailable);
+            publisher = new Publisher(reservations, broker);
+        }
+
+        public CommandResult submit(
+            String operationId,
+            String correlationId,
+            int quantity
+        ) {
+            CommandResult result = reservations.submit(
+                operationId,
+                correlationId,
+                quantity
+            );
+            observations.add(new Observation(
+                "gateway",
+                "reservation.submit",
+                correlationId,
+                operationId,
+                null,
+                "accepted"
+            ));
+            return result;
+        }
+
+        // [Implementation 8-1] deadline 검사 후 예약 접수
+        // deadline이 지난 요청은 상태를 만들기 전에 거절하고, 접수한 요청은 correlation ID를 관찰값에 남깁니다.
+        public CommandResult submit(
+            String operationId,
+            String correlationId,
+            int quantity,
+            long nowMillis,
+            long deadlineMillis
+        ) {
+            if (nowMillis >= deadlineMillis) {
+                throw new DeadlineExceeded();
+            }
+            CommandResult result = reservations.submit(
+                operationId,
+                correlationId,
+                quantity,
+                nowMillis
+            );
+            observations.add(new Observation(
+                "gateway",
+                "reservation.submit",
+                correlationId,
+                operationId,
+                null,
+                "accepted"
+            ));
+            return result;
+        }
+
+        public void publishPending(boolean crashAfterFirstSend) {
+            publisher.publishPending(crashAfterFirstSend);
+        }
+
+        public void consumeInventoryRequests() {
+            for (Event event : broker.messages()) {
+                if (event.kind() != Kind.RESERVATION_REQUESTED) {
+                    continue;
+                }
+                Event result = inventory.handle(event);
+                inventoryResults.add(result);
+                observations.add(new Observation(
+                    "inventory",
+                    "inventory.result",
+                    result.correlationId(),
+                    null,
+                    result.eventId(),
+                    result.kind().name()
+                ));
+            }
+        }
+
+        public void applyInventoryResults() {
+            for (Event result : inventoryResults) {
+                reservations.applyInventoryResult(result);
+            }
+        }
+
+        // [Implementation 8-2] 미발행 이벤트부터 조회 모델까지 복구
+        // Outbox 발행, 재고 처리, 정본 조회, 상태 이벤트 재발행, 조회 모델 반영 순서로 복구합니다.
+        public void reconcile() {
+            publishPending(false);
+            consumeInventoryRequests();
+            reconcilePending(0L, 1L);
+            publishPending(false);
+            for (Event event : broker.messages()) {
+                query.consume(event);
+            }
+        }
+
+        // [Implementation 8-3] 미확정 예약 재조정
+        // 각 PENDING·UNKNOWN 예약에 대해 정본 조회 결과와 다음 시도 시각을 기록합니다.
+        public List<ReconciliationRecord> reconcilePending(
+            long nowMillis,
+            long retryDelayMillis
+        ) {
+            if (retryDelayMillis <= 0) {
+                throw new IllegalArgumentException("retry delay must be positive");
+            }
+            List<ReconciliationRecord> current = new ArrayList<>();
+            for (Reservation reservation : reservations.pendingReservations()) {
+                ReconciliationRecord record;
+                try {
+                    Event result = inventory.findResultByOperation(
+                        reservation.operationId()
+                    );
+                    if (result == null) {
+                        reservations.markPending(reservation.reservationId());
+                        record = new ReconciliationRecord(
+                            reservation.operationId(),
+                            reservation.reservationId(),
+                            ReconciliationOutcome.PENDING_NOT_FOUND,
+                            nowMillis + retryDelayMillis
+                        );
+                    } else {
+                        reservations.applyInventoryResult(result, nowMillis);
+                        record = new ReconciliationRecord(
+                            reservation.operationId(),
+                            reservation.reservationId(),
+                            ReconciliationOutcome.APPLIED,
+                            0L
+                        );
+                    }
+                } catch (InventoryQueryUnavailable unavailable) {
+                    reservations.markUnknown(reservation.reservationId());
+                    record = new ReconciliationRecord(
+                        reservation.operationId(),
+                        reservation.reservationId(),
+                        ReconciliationOutcome.PENDING_SOURCE_UNAVAILABLE,
+                        nowMillis + retryDelayMillis
+                    );
+                }
+                current.add(record);
+                reconciliationRecords.add(record);
+            }
+            return List.copyOf(current);
+        }
+
+        // [Implementation 8-4] 최종 상태 수렴 판정
+        // 두 상태가 PENDING으로 같다는 이유로 성공 처리하지 않고, 정본과 조회 모델이 같은 최종 상태일 때만 수렴으로 봅니다.
+        public boolean converged(String reservationId) {
+            Status authoritative = reservations.status(reservationId);
+            boolean terminal = authoritative == Status.ACCEPTED
+                || authoritative == Status.REJECTED;
+            return terminal
+                && reservations.pendingOutboxCount() == 0
+                && authoritative == query.status(reservationId);
+        }
+
+        public List<Event> brokerMessages() {
+            return broker.messages();
+        }
+
+        public List<Event> inventoryResults() {
+            return List.copyOf(inventoryResults);
+        }
+
+        public List<Observation> observations() {
+            return List.copyOf(observations);
+        }
+
+        public List<ReconciliationRecord> reconciliationRecords() {
+            return List.copyOf(reconciliationRecords);
+        }
+
+        public ReservationService reservations() {
+            return reservations;
+        }
+
+        public InventoryService inventory() {
+            return inventory;
+        }
+
+        public Broker broker() {
+            return broker;
+        }
+
+        public QueryService query() {
+            return query;
+        }
+    }
 }
