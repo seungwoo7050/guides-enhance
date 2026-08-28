@@ -1,0 +1,53 @@
+# [Implementation 1] DB·Redis·판단 API·Kafka·관측 설정 연결
+# 필수 주소와 timeout, TTL, topic, Circuit Breaker 설정을 시작할 때 함께 검증합니다.
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+  data:
+    redis:
+      timeout: 1s
+  kafka:
+    bootstrap-servers: localhost:65535
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+policy:
+  client:
+    base-url: http://localhost:9999
+    timeout: 1s
+
+publication:
+  cache:
+    ttl: 24h
+  outbox:
+    publisher-enabled: false
+    topic: publication-events
+    poll-interval: 1s
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      policy:
+        sliding-window-size: 4
+        minimum-number-of-calls: 2
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 1s
+        record-exceptions:
+          - dev.guides.spring.publication.DependencyUnavailableException
+        ignore-exceptions:
+          - dev.guides.spring.publication.PolicyRejectedException
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
