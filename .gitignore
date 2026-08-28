@@ -1,0 +1,30 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 로그와 임시 상태
+*.log
+*.pid
+*.tmp
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# Java와 JVM 도구
+target/
+**/target/
+.workspace/
+**/.workspace/
+.guide/
+*.jfr
+.classpath
+.project
+.factorypath
+*.iml
+
+# Python 검사기 캐시
+__pycache__/
+*.pyc
