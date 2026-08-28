@@ -1,6 +1,7 @@
 """상태 전이, policy, 자원 수명과 recovery를 단위별로 검증합니다."""
 from __future__ import annotations
 import unittest
+from kernel_model.deadlock import DeadlockInputError, detect_deadlocked, find_wait_cycle, safe_sequence
 from kernel_model.lifecycle import KernelState, TaskState
 from kernel_model.scheduler import JobSpec, Policy, simulate
 from kernel_model.synchronization import ConditionChannel, CountingSemaphore, SynchronizationError, WaitToken
@@ -80,5 +81,22 @@ class SchedulerTests(unittest.TestCase):
             simulate([JobSpec('A', 0, (1,))], Policy.RR, quantum=0)
         with self.assertRaisesRegex(ValueError, 'Duplicate job identifier'):
             simulate([JobSpec('A', 0, (1,)), JobSpec('A', 1, (1,))], Policy.FCFS)
+
+class DeadlockTests(unittest.TestCase):
+
+    def test_cycle_and_multiple_instance_detection(self) -> None:
+        cycle = find_wait_cycle({'A': ['B'], 'B': ['C'], 'C': ['A']})
+        self.assertIsNotNone(cycle)
+        self.assertEqual(cycle[0], cycle[-1])
+        self.assertEqual(detect_deadlocked([0, 0], {'A': [1, 0], 'B': [0, 1]}, {'A': [0, 1], 'B': [1, 0]}), {'A', 'B'})
+
+    def test_safe_sequence(self) -> None:
+        sequence = safe_sequence([1, 1], {'A': [1, 0], 'B': [0, 1]}, {'A': [1, 1], 'B': [1, 1]})
+        self.assertIsNotNone(sequence)
+        self.assertEqual(set(sequence or []), {'A', 'B'})
+
+    def test_rejects_vector_shape_mismatch(self) -> None:
+        with self.assertRaises(DeadlockInputError):
+            detect_deadlocked([0], {'A': [1, 0]}, {'A': [0, 1]})
 if __name__ == '__main__':
     unittest.main()
