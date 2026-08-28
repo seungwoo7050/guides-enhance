@@ -1,0 +1,27 @@
+clients:
+  decision:
+    base-url: http://localhost:18080
+    connect-timeout: 200ms
+    read-timeout: 500ms
+    max-attempts: 2
+# [Implementation 4] Circuit Breaker에 의존성 장애만 기록
+# 정상적인 409 업무 거절은 실패율 계산에서 제외합니다.
+resilience4j:
+  circuitbreaker:
+    instances:
+      decisionClient:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 2
+        minimum-number-of-calls: 2
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 5s
+        permitted-number-of-calls-in-half-open-state: 1
+        record-exceptions:
+          - dev.guides.spring.failclosed.DependencyUnavailableException
+        ignore-exceptions:
+          - dev.guides.spring.failclosed.BusinessDeclineException
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,circuitbreakers
