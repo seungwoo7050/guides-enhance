@@ -2,6 +2,7 @@
 from __future__ import annotations
 import unittest
 from kernel_model.lifecycle import KernelState, TaskState
+from kernel_model.scheduler import JobSpec, Policy, simulate
 from kernel_model.synchronization import ConditionChannel, CountingSemaphore, SynchronizationError, WaitToken
 
 class LifecycleTests(unittest.TestCase):
@@ -52,5 +53,32 @@ class SynchronizationTests(unittest.TestCase):
         self.assertTrue(semaphore.acquire('A'))
         with self.assertRaisesRegex(SynchronizationError, 'more than once'):
             semaphore.acquire('A')
+
+class SchedulerTests(unittest.TestCase):
+
+    def test_round_robin_and_metrics(self) -> None:
+        jobs = [JobSpec('A', 0, (4,)), JobSpec('B', 1, (2,))]
+        result = simulate(jobs, Policy.RR, quantum=2)
+        self.assertEqual([tick.running for tick in result.timeline], ['A', 'A', 'B', 'B', 'A', 'A'])
+        self.assertEqual(result.completion_order, ('B', 'A'))
+        self.assertEqual(result.metrics['A'].response, 0)
+        self.assertEqual(result.metrics['B'].response, 1)
+        self.assertEqual(result.cpu_busy_ticks, 6)
+
+    def test_io_wait_moves_job_out_of_ready_queue(self) -> None:
+        jobs = [JobSpec('A', 0, (1, 1), (2,)), JobSpec('B', 0, (2,))]
+        result = simulate(jobs, Policy.FCFS)
+        self.assertEqual(result.completion_order, ('B', 'A'))
+        self.assertTrue(any((tid == 'A' for tick in result.timeline for tid, _ in tick.blocked)))
+
+    def test_sjf_uses_current_cpu_burst(self) -> None:
+        result = simulate([JobSpec('long', 0, (5,)), JobSpec('short', 0, (1,))], Policy.SJF)
+        self.assertEqual(result.timeline[0].running, 'short')
+
+    def test_rejects_invalid_quantum_and_duplicate_ids(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'Quantum'):
+            simulate([JobSpec('A', 0, (1,))], Policy.RR, quantum=0)
+        with self.assertRaisesRegex(ValueError, 'Duplicate job identifier'):
+            simulate([JobSpec('A', 0, (1,)), JobSpec('A', 1, (1,))], Policy.FCFS)
 if __name__ == '__main__':
     unittest.main()
