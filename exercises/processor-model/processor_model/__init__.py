@@ -2,4 +2,4 @@
 
 
 
-__all__ = ['bits']
+__all__ = ['bits', 'isa']
