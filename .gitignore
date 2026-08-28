@@ -1,0 +1,34 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 로그와 임시 상태
+*.log
+*.pid
+*.tmp
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# Node.js와 브라우저 검사
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+coverage/
+**/coverage/
+playwright-report/
+**/playwright-report/
+test-results/
+**/test-results/
+*.tsbuildinfo
+exercises/project-catalog/reference/next-env.d.ts
+
+# 생성한 실습 작업 공간
+workspace/
+**/workspace/
+.workspace-*/
+**/.workspace-*/
