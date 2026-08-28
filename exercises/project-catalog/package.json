@@ -6,7 +6,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "build": "next build",
     "start": "next start"
   },
