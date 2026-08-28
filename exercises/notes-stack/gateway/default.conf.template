@@ -1,0 +1,36 @@
+# [Implementation 8-1] Serve static content and forward application requests to FastCGI
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
+
+    server_name _;
+    ssl_certificate /etc/nginx/tls/development.crt;
+    ssl_certificate_key /etc/nginx/tls/development.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location = /static.txt {
+        root /usr/share/nginx/html;
+        default_type text/plain;
+    }
+
+    location / {
+        include fastcgi_params;
+        # 이 경로는 Nginx가 아니라 `app` 컨테이너 안에 실제로 존재해야 합니다.
+        fastcgi_param SCRIPT_FILENAME /var/www/html/index.php;
+        fastcgi_param SCRIPT_NAME /index.php;
+        fastcgi_param PATH_INFO $uri;
+        fastcgi_param REQUEST_URI $request_uri;
+        fastcgi_param HTTPS on;
+        fastcgi_pass ${APP_UPSTREAM};
+    }
+}
