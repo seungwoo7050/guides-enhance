@@ -1,8 +1,198 @@
-:root { font-family: system-ui, sans-serif; line-height: 1.5; color: #18211c; background: #f3f0e8; }
-body { margin: 0; }
-main { max-width: 70rem; margin: 0 auto; padding: 2rem; }
-input, select, button { font: inherit; padding: .5rem; }
-.search { display: flex; gap: .75rem; align-items: center; }
-.projects { list-style: none; padding: 0; }
-article { margin: 1rem 0; padding: 1rem; border: 1px solid #a6ada8; background: white; }
-.status-message { min-height: 1.5rem; }
+/* [Implementation 13]
+ * 좁은 화면과 긴 문자열에서도 가로 넘침을 막고, 키보드 초점과
+ * 애니메이션 감소 설정을 반영합니다.
+ */
+:root {
+  color: #18211c;
+  background: #f3f0e8;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 0;
+}
+
+body {
+  min-width: 0;
+  margin: 0;
+}
+
+button,
+input,
+select {
+  min-width: 0;
+  min-height: 2.75rem;
+  max-width: 100%;
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+main {
+  width: min(70rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: clamp(2rem, 6vw, 5rem) 0;
+}
+
+.page-header {
+  max-width: 46rem;
+}
+
+h1 {
+  margin: 0.35rem 0 1rem;
+  font-size: clamp(2.2rem, 7vw, 5rem);
+  line-height: 0.98;
+  overflow-wrap: anywhere;
+}
+
+.eyebrow {
+  color: #476553;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.search {
+  display: grid;
+  grid-template-columns: auto minmax(10rem, 1fr) auto minmax(9rem, auto) auto;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 2.5rem 0 1rem;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid #78847d;
+  border-radius: 0.35rem;
+  padding: 0.55rem 0.7rem;
+  background: #fff;
+}
+
+button {
+  border: 1px solid #234532;
+  border-radius: 0.35rem;
+  padding: 0.55rem 0.9rem;
+  color: #fff;
+  background: #234532;
+}
+
+button[type="button"] {
+  color: #234532;
+  background: transparent;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid #d76e00;
+  outline-offset: 3px;
+}
+
+.status-message {
+  min-height: 1.5rem;
+}
+
+.projects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.projects > li {
+  min-width: 0;
+}
+
+article {
+  height: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border: 1px solid #a6ada8;
+  border-radius: 0.75rem;
+  padding: 1.2rem;
+  background: #fff;
+}
+
+.title-row {
+  display: flex;
+  min-width: 0;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+h2 {
+  min-width: 0;
+  margin: 0;
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.title-row span {
+  flex: none;
+  color: #476553;
+  font-size: 0.85rem;
+}
+
+.editor {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.server-value {
+  margin: 0;
+  color: #476553;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.empty {
+  border: 1px dashed #78847d;
+  padding: 2rem;
+}
+
+@media (max-width: 42rem) {
+  .search,
+  .projects {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .search label {
+    margin-bottom: -0.4rem;
+  }
+
+  .title-row {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
