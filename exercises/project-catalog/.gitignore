@@ -1,0 +1,23 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 로그와 임시 프로세스 파일
+*.log
+*.pid
+*.tmp
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# Node.js, Next.js와 테스트 생성물
+node_modules/
+.next/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+next-env.d.ts
