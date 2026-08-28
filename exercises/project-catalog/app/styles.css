@@ -1,0 +1,8 @@
+:root { font-family: system-ui, sans-serif; line-height: 1.5; color: #18211c; background: #f3f0e8; }
+body { margin: 0; }
+main { max-width: 70rem; margin: 0 auto; padding: 2rem; }
+input, select, button { font: inherit; padding: .5rem; }
+.search { display: flex; gap: .75rem; align-items: center; }
+.projects { list-style: none; padding: 0; }
+article { margin: 1rem 0; padding: 1rem; border: 1px solid #a6ada8; background: white; }
+.status-message { min-height: 1.5rem; }
