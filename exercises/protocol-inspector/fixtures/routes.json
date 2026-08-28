@@ -1,0 +1,25 @@
+[
+  {
+    "network": "0.0.0.0/0",
+    "interface": "wan0",
+    "next_hop": "203.0.113.1",
+    "metric": 100
+  },
+  {
+    "network": "10.0.0.0/8",
+    "interface": "core0",
+    "next_hop": "10.0.0.1",
+    "metric": 10
+  },
+  {
+    "network": "10.20.0.0/16",
+    "interface": "branch0",
+    "next_hop": "10.20.0.1",
+    "metric": 10
+  },
+  {
+    "network": "10.20.30.0/24",
+    "interface": "lan0",
+    "metric": 0
+  }
+]
