@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bplus-tree"
+version = "0.1.0"
+description = "In-memory B+ tree with point lookups and linked-leaf range scans"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["bplus_tree"]
