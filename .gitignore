@@ -1,0 +1,37 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 검증 로그와 임시 상태
+make-out.txt
+tree.txt
+.verify/
+*.log
+*.pid
+*.tmp
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+.venv/
+*.py[cod]
+.coverage
+htmlcov/
+
+# Docker 실습이 만드는 상태, 인증서, 비밀값과 backup
+exercises/*/workspace/
+exercises/*/.workspace.lock
+exercises/*/.workspace.tmp.*/
+**/secrets/*.txt
+!**/secrets/*.txt.example
+**/backups/*
+**/*.crt
+**/*.key
