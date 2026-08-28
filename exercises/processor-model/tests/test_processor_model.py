@@ -4,7 +4,7 @@ import sys
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from processor_model import bits, isa, perf
+from processor_model import bits, control, isa, perf
 
 class BitsTests(unittest.TestCase):
 
@@ -63,5 +63,12 @@ class IsaTests(unittest.TestCase):
         program, labels = isa.parse_program(['li r1, 1', 'lw r2, 0(r1)', 'halt'])
         with self.assertRaises(RuntimeError):
             isa.Machine().run(program, labels)
+
+class ControlTests(unittest.TestCase):
+
+    def test_load_uses_memory_writeback(self) -> None:
+        result = control.signals('lw')
+        self.assertEqual(result['mem_read'], 1)
+        self.assertEqual(result['writeback'], 'memory')
 if __name__ == '__main__':
     unittest.main()
