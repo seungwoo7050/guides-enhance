@@ -5,7 +5,7 @@ import sys
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from processor_model import bits, cache, control, isa, perf, pipeline, predictor, rob, vm
+from processor_model import bits, cache, coherence, control, isa, perf, pipeline, predictor, rob, vm
 
 class BitsTests(unittest.TestCase):
 
@@ -133,6 +133,14 @@ class VirtualMemoryTests(unittest.TestCase):
         self.assertEqual(result['page_faults'], 2)
         self.assertEqual(result['protection_faults'], 1)
         self.assertGreaterEqual(result['tlb_invalidations'], 1)
+
+class CoherenceTests(unittest.TestCase):
+
+    def test_false_sharing_causes_invalidations(self) -> None:
+        accesses = coherence.parse_trace((ROOT / 'fixtures/traces/coherence-false-sharing.trace').read_text(encoding='utf-8').splitlines())
+        result = coherence.MESISimulator(2, 64).run(accesses)
+        self.assertGreaterEqual(result['invalidations'], 2)
+        self.assertGreaterEqual(result['bus_read_exclusive'], 2)
 
 class BranchPredictorTests(unittest.TestCase):
 
