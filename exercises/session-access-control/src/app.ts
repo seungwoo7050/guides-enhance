@@ -2,7 +2,7 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 
-import { LoginSchema, type User } from "./contracts";
+import { LoginSchema, ProfileSchema, type User } from "./contracts";
 import type { SecurityStore } from "./store";
 
 const SESSION_COOKIE = "access_session";
@@ -80,6 +80,33 @@ export function buildApp({
   app.get("/me", async (request, reply) => {
     const user = requireUser(request, reply);
     return user ? { user } : reply;
+  });
+
+  // [Implementation 8] Profile owner or admin check
+  app.patch("/profiles/:id", async (request, reply) => {
+    const actor = requireUser(request, reply);
+    if (!actor) return reply;
+
+    const { id } = request.params as { id: string };
+    if (actor.id !== id && actor.role !== "admin") {
+      return reply.code(403).send({ code: "forbidden" });
+    }
+
+    const parsed = ProfileSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ code: "invalid_request" });
+
+    const user = store.updateDisplayName(id, parsed.data.displayName);
+    return user
+      ? { user }
+      : reply.code(404).send({ code: "not_found" });
+  });
+
+  // [Implementation 9] Admin-only user listing
+  app.get("/admin/users", async (request, reply) => {
+    const actor = requireUser(request, reply);
+    if (!actor) return reply;
+    if (actor.role !== "admin") return reply.code(403).send({ code: "forbidden" });
+    return { users: store.listUsers() };
   });
 
   return app;
