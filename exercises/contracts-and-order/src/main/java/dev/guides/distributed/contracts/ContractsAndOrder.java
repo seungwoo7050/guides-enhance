@@ -132,8 +132,9 @@ public final class ContractsAndOrder {
                 claimedSequences.put(event.aggregateId(), claims);
             }
             claims.put(event.sequence(), event);
-            buffers.computeIfAbsent(event.aggregateId(), ignored -> new TreeMap<>()).put(event.sequence(), event);
-            return Outcome.BUFFERED;
+            apply(event);
+            drain(event.aggregateId());
+            return Outcome.APPLIED;
         }
 
         public synchronized String state(String aggregateId) {
@@ -147,5 +148,32 @@ public final class ContractsAndOrder {
         public synchronized int isolatedCount() {
             return isolated.size();
         }
-}
+
+        // [Implementation 2-3] 상태와 다음 sequence 함께 갱신
+        // 상태를 적용하고 다음 sequence를 전진시키는 작업을 같은 synchronized 블록에서 끝냅니다.
+        private void apply(Event event) {
+            states.put(event.aggregateId(), event.state());
+            nextSequence.put(event.aggregateId(), event.sequence() + 1);
+        }
+
+        // [Implementation 2-4] Aggregate별 보류 이벤트 적용
+        // 빠진 sequence가 도착한 aggregate만 연속해서 적용하고 다른 aggregate는 건드리지 않습니다.
+        private void drain(String aggregateId) {
+            TreeMap<Long, Event> buffer = buffers.get(aggregateId);
+            if (buffer == null) {
+                return;
+            }
+            while (true) {
+                long expected = nextSequence.getOrDefault(aggregateId, 1L);
+                Event next = buffer.remove(expected);
+                if (next == null) {
+                    return;
+                }
+                apply(next);
+            }
+        }
+    }
+
+    private ContractsAndOrder() {
+    }
 }
