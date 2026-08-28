@@ -4,7 +4,7 @@ import sys
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from processor_model import bits, isa
+from processor_model import bits, isa, perf
 
 class BitsTests(unittest.TestCase):
 
@@ -27,6 +27,24 @@ class BitsTests(unittest.TestCase):
         self.assertEqual(result['classification'], 'normal')
         self.assertEqual(result['hex'], '0x3dcccccd')
         self.assertNotEqual(result['rounded_value'], 0.1)
+
+class PerformanceTests(unittest.TestCase):
+
+    def test_cpu_time(self) -> None:
+        result = perf.cpu_time(1000000000, 2.0, 2.0)
+        self.assertAlmostEqual(result['seconds'], 1.0)
+
+    def test_amdahl_limit(self) -> None:
+        result = perf.amdahl(0.5, 10.0)
+        self.assertAlmostEqual(result['overall_speedup'], 1 / 0.55)
+        self.assertAlmostEqual(result['infinite_enhancement_limit'], 2.0)
+
+    def test_fully_enhanced_amdahl_limit_is_unbounded(self) -> None:
+        result = perf.amdahl(1.0, 4.0)
+        self.assertIsNone(result['infinite_enhancement_limit'])
+
+    def test_amat(self) -> None:
+        self.assertAlmostEqual(perf.amat(1.0, 0.05, 80.0)['amat'], 5.0)
 
 class IsaTests(unittest.TestCase):
 
