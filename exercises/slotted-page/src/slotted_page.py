@@ -136,3 +136,59 @@ class SlottedPage:
             self._data[self._free_end : self._free_end + len(payload)] = payload
             rebuilt.append(Slot(self._free_end, len(payload), True))
         self._slots = rebuilt
+
+    # [Implementation 6] 메모리 상태를 고정 크기 page bytes로 직렬화합니다.
+    # header, slot directory, record 영역을 하나의 page 안에 기록합니다.
+    def serialize(self) -> bytes:
+        raw = bytearray(self._data)
+        HEADER.pack_into(raw, 0, MAGIC, len(self._slots), self._free_end)
+        for index, slot in enumerate(self._slots):
+            SLOT.pack_into(
+                raw,
+                HEADER.size + index * SLOT.size,
+                slot.offset,
+                slot.length,
+                int(slot.alive),
+            )
+        return bytes(raw)
+
+    # [Implementation 7] 외부에서 읽은 page bytes를 검증한 뒤 객체로 만듭니다.
+    # directory 범위, flag, record 위치와 겹침을 모두 확인하기 전에는 상태를 반영하지 않습니다.
+    @classmethod
+    def from_bytes(cls, raw: bytes) -> "SlottedPage":
+        if not isinstance(raw, bytes):
+            raise TypeError("raw page must be bytes")
+        if len(raw) < HEADER.size:
+            raise ValueError("truncated page")
+        magic, slot_count, free_end = HEADER.unpack_from(raw, 0)
+        if magic != MAGIC:
+            raise ValueError("invalid page magic")
+        directory_end = HEADER.size + slot_count * SLOT.size
+        if directory_end > free_end or free_end > len(raw):
+            raise ValueError("corrupt page boundaries")
+
+        decoded_slots: list[Slot] = []
+        live_ranges: list[tuple[int, int]] = []
+        for index in range(slot_count):
+            offset, length, alive = SLOT.unpack_from(raw, HEADER.size + index * SLOT.size)
+            if alive not in (0, 1):
+                raise ValueError("invalid slot state")
+            if alive:
+                if length == 0 or offset < free_end or offset + length > len(raw):
+                    raise ValueError("corrupt live slot")
+                live_ranges.append((offset, offset + length))
+                decoded_slots.append(Slot(offset, length, True))
+            else:
+                if offset != 0 or length != 0:
+                    raise ValueError("corrupt tombstone slot")
+                decoded_slots.append(Slot(0, 0, False))
+
+        live_ranges.sort()
+        if any(previous_end > current_start for (_, previous_end), (current_start, _) in zip(live_ranges, live_ranges[1:])):
+            raise ValueError("overlapping live slots")
+
+        page = cls(len(raw))
+        page._data[:] = raw
+        page._free_end = free_end
+        page._slots = decoded_slots
+        return page
