@@ -1,0 +1,43 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 로그와 임시 상태
+*.log
+*.pid
+*.tmp
+.guide/
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+.venv/
+*.py[cod]
+.coverage
+htmlcov/
+
+# C와 C++
+build/
+**/build/
+build-sanitize/
+**/build-sanitize/
+*.o
+*.d
+*.a
+*.out
+*.dSYM/
+
+# 생성한 실습 작업 공간
+workspace/
+**/workspace/
+exercises/**/.workspace-create.lock/
+exercises/**/.workspace-copy.*/
+exercises/**/.checker-mutant.*/
