@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.TreeMap;
 
 public final class ReservationFlow {
     // [Implementation 1] 서비스 간 공유 상태와 이벤트
@@ -556,6 +557,182 @@ public final class ReservationFlow {
                 }
                 reservations.markPublished(event.eventId());
                 first = false;
+            }
+        }
+    }
+
+    // [Implementation 7] 조회 모델의 스키마와 순서 처리
+    // QueryService가 schema version, event ID, sequence gap과 예약별 최종 상태를 보관합니다.
+    public static final class QueryService {
+        private final Map<String, Status> statuses = new HashMap<>();
+        private final Map<String, Integer> lastSequence = new HashMap<>();
+        private final Map<String, TreeMap<Integer, Event>> pending = new HashMap<>();
+        private final Map<String, TreeMap<Integer, Event>> claimedSequences = new HashMap<>();
+        private final Map<String, EventEnvelope> receivedEvents = new LinkedHashMap<>();
+        private final List<Event> isolated = new ArrayList<>();
+
+        public void consume(Event event) {
+            consume(new EventEnvelope(1, event));
+        }
+
+        public void consume(int schemaVersion, Event event) {
+            consume(new EventEnvelope(schemaVersion, event));
+        }
+
+        // [Implementation 7-1] Envelope·식별자·순서 검증
+        // event ID를 기록하거나 조회 모델을 바꾸기 전에 schema와 sequence 규칙을 검사합니다.
+        public void consume(EventEnvelope envelope) {
+            if (envelope == null || envelope.event() == null) {
+                throw new IllegalArgumentException("event envelope is required");
+            }
+            int schemaVersion = envelope.schemaVersion();
+            Event event = envelope.event();
+            EventEnvelope received = receivedEvents.get(event.eventId());
+            if (received != null) {
+                if (!received.equals(envelope)) {
+                    throw new IllegalArgumentException(
+                        "projection event ID was reused with different payload"
+                    );
+                }
+                return;
+            }
+
+            if (schemaVersion != 1) {
+                receivedEvents.put(event.eventId(), envelope);
+                isolated.add(event);
+                return;
+            }
+            if (event.kind() != Kind.RESERVATION_REQUESTED
+                && event.kind() != Kind.RESERVATION_ACCEPTED
+                && event.kind() != Kind.RESERVATION_REJECTED) {
+                receivedEvents.put(event.eventId(), envelope);
+                return;
+            }
+
+            validateProjectionSequence(event);
+            TreeMap<Integer, Event> claims = claimedSequences.get(event.reservationId());
+            Event claimed = claims == null ? null : claims.get(event.sequence());
+            if (claimed != null && !claimed.equals(event)) {
+                throw new IllegalArgumentException(
+                    "different projection events claim one sequence"
+                );
+            }
+
+            int expected = lastSequence.getOrDefault(event.reservationId(), 0) + 1;
+            if (event.sequence() > expected) {
+                TreeMap<Integer, Event> buffer = pending.computeIfAbsent(
+                    event.reservationId(),
+                    ignored -> new TreeMap<>()
+                );
+                Event competing = buffer.get(event.sequence());
+                if (competing != null && !competing.equals(event)) {
+                    throw new IllegalArgumentException(
+                        "different projection events claim one sequence"
+                    );
+                }
+                receivedEvents.put(event.eventId(), envelope);
+                if (claims == null) {
+                    claims = new TreeMap<>();
+                    claimedSequences.put(event.reservationId(), claims);
+                }
+                claims.put(event.sequence(), event);
+                buffer.put(event.sequence(), event);
+                return;
+            }
+            if (event.sequence() < expected) {
+                if (claimed == null) {
+                    throw new IllegalArgumentException(
+                        "late event claims an already applied sequence"
+                    );
+                }
+                receivedEvents.put(event.eventId(), envelope);
+                return;
+            }
+
+            apply(event);
+            receivedEvents.put(event.eventId(), envelope);
+            if (claims == null) {
+                claims = new TreeMap<>();
+                claimedSequences.put(event.reservationId(), claims);
+            }
+            claims.put(event.sequence(), event);
+            drain(event.reservationId());
+        }
+
+        public Status status(String reservationId) {
+            return statuses.get(reservationId);
+        }
+
+        public int pendingCount(String reservationId) {
+            return pending.getOrDefault(reservationId, new TreeMap<>()).size();
+        }
+
+        public int isolatedCount() {
+            return isolated.size();
+        }
+
+        // [Implementation 7-2] 조회 모델 전체 재구축
+        // 기존 상태와 중복·순서 기록을 모두 비운 뒤 EventEnvelope 이력을 다시 적용합니다.
+        public void rebuild(List<EventEnvelope> history) {
+            statuses.clear();
+            lastSequence.clear();
+            pending.clear();
+            claimedSequences.clear();
+            receivedEvents.clear();
+            isolated.clear();
+            for (EventEnvelope envelope : history) {
+                consume(envelope);
+            }
+        }
+
+        // [Implementation 7-3] 연속된 보류 이벤트 적용
+        // 예약 하나에서 다음 sequence와 정확히 일치하는 이벤트만 보류 목록에서 꺼냅니다.
+        private void drain(String reservationId) {
+            TreeMap<Integer, Event> events = pending.get(reservationId);
+            while (events != null) {
+                int expected = lastSequence.getOrDefault(reservationId, 0) + 1;
+                Event next = events.remove(expected);
+                if (next == null) {
+                    break;
+                }
+                apply(next);
+                if (events.isEmpty()) {
+                    pending.remove(reservationId);
+                    break;
+                }
+            }
+        }
+
+        // [Implementation 7-4] 모순된 최종 상태 방지
+        // 이미 확정된 상태와 반대되는 결과는 checkpoint를 전진시키기 전에 거절합니다.
+        private void apply(Event event) {
+            Status status = switch (event.kind()) {
+                case RESERVATION_REQUESTED -> Status.PENDING;
+                case RESERVATION_ACCEPTED -> Status.ACCEPTED;
+                case RESERVATION_REJECTED -> Status.REJECTED;
+                default -> throw new IllegalArgumentException("unsupported projection event");
+            };
+            Status previous = statuses.get(event.reservationId());
+            if (previous != null && previous != Status.PENDING && status != previous) {
+                throw new IllegalStateException(
+                    "contradictory projection terminal transition"
+                );
+            }
+            statuses.put(event.reservationId(), status);
+            lastSequence.put(event.reservationId(), event.sequence());
+        }
+
+        private static void validateProjectionSequence(Event event) {
+            boolean creation = event.kind() == Kind.RESERVATION_REQUESTED
+                && event.sequence() == 1;
+            boolean terminal = (event.kind() == Kind.RESERVATION_ACCEPTED
+                || event.kind() == Kind.RESERVATION_REJECTED)
+                && event.sequence() == 2;
+            if (!creation && !terminal) {
+                throw new IllegalArgumentException(
+                    "reservation projection requires REQUESTED sequence 1 "
+                        + "and terminal sequence 2"
+                );
             }
         }
     }
