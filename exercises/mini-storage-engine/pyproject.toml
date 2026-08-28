@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-storage-engine"
+version = "0.1.0"
+description = "Page, buffer, index, and WAL components composed as a small storage engine"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["mini_storage"]
