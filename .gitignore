@@ -1,0 +1,21 @@
+# 운영체제와 편집기
+.DS_Store
+*.swp
+*.swo
+
+# 로그와 임시 상태
+*.log
+*.pid
+*.tmp
+
+# 가이드별 준비 캐시
+.guide/
+
+# 환경 변수와 비밀값
+.env
+.env.*
+!.env.example
+
+# 생성한 실습 작업 공간
+workspace/
+**/workspace/
