@@ -33,6 +33,34 @@ class CounterConcurrencyTest {
     }
   }
 
+  @Test
+  void lockPreservesConservationInvariant() throws Exception {
+    LockedCounter counter = new LockedCounter(100);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      List<Future<Boolean>> results =
+          List.of(
+              executor.submit(() -> counter.trySubtract(80)),
+              executor.submit(() -> counter.trySubtract(80)));
+      long accepted = acceptedAmount(results, 80);
+
+      assertThat(accepted).isEqualTo(80);
+      assertThat(counter.value()).isEqualTo(20);
+      assertThat(accepted + counter.value()).isEqualTo(100);
+    } finally {
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
+  void rejectsInvalidCounterInputs() {
+    assertThatThrownBy(() -> new RacyCounter(-1)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new LockedCounter(-1)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new LockedCounter(1).trySubtract(0))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   private static long acceptedAmount(List<Future<Boolean>> results, long delta) throws Exception {
     long accepted = 0;
     for (Future<Boolean> result : results) {
