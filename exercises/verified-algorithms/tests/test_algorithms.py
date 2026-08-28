@@ -13,6 +13,32 @@ sys.path.insert(0, str(SRC))
 from verified_algorithms.ranges import prefix_sums, range_sum, lower_bound
 from verified_algorithms.trees import RedBlackNode, red_black_height
 from verified_algorithms.optimization import knapsack_01, select_intervals, lcs_length
+from verified_algorithms.graphs import bfs_distances
+def all_pairs_distances(
+    size: int,
+    edges: list[tuple[int, int, int]],
+) -> list[list[int | None]]:
+    distance: list[list[int | None]] = [[None] * size for _ in range(size)]
+    for vertex in range(size):
+        distance[vertex][vertex] = 0
+    for source, target, weight in edges:
+        current = distance[source][target]
+        if current is None or weight < current:
+            distance[source][target] = weight
+    for middle in range(size):
+        for source in range(size):
+            if distance[source][middle] is None:
+                continue
+            for target in range(size):
+                if distance[middle][target] is None:
+                    continue
+                candidate = distance[source][middle] + distance[middle][target]
+                current = distance[source][target]
+                if current is None or candidate < current:
+                    distance[source][target] = candidate
+    return distance
+
+
 def brute_interval_count(intervals: list[tuple[int, int]]) -> int:
     best = 0
     for count in range(len(intervals) + 1):
@@ -256,6 +282,35 @@ class DesignTechniqueTests(unittest.TestCase):
                 lcs_length(left, right),
                 brute_lcs_length(left, right),
             )
+
+
+class GraphTests(unittest.TestCase):
+    def test_bfs_distances_against_unit_weight_floyd_warshall(self) -> None:
+        source = random.Random(20250111)
+        self.assertEqual(bfs_distances([[]], 0), [0])
+        for _ in range(50):
+            size = 7
+            graph = [
+                [
+                    target
+                    for target in range(size)
+                    if target != vertex and source.random() < 0.25
+                ]
+                for vertex in range(size)
+            ]
+            edges = [
+                (vertex, target, 1)
+                for vertex, neighbors in enumerate(graph)
+                for target in neighbors
+            ]
+            expected = all_pairs_distances(size, edges)[0]
+            self.assertEqual(bfs_distances(graph, 0), expected)
+
+    def test_bfs_rejects_invalid_vertices(self) -> None:
+        with self.assertRaises(ValueError):
+            bfs_distances([], 0)
+        with self.assertRaises(ValueError):
+            bfs_distances([[1], [2]], 0)
 
 
 if __name__ == "__main__":
