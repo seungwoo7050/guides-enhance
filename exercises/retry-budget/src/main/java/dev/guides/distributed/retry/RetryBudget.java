@@ -167,4 +167,98 @@ public final class RetryBudget {
             return state;
         }
     }
+
+    // [Implementation 5] DLQ 재처리 입력
+    // DeadLetter에 event ID, operation ID와 payload를 함께 보관합니다.
+    public record DeadLetter(String eventId, String operationId, String payload) {
+        public DeadLetter {
+            if (eventId == null || eventId.isBlank()
+                || operationId == null || operationId.isBlank()
+                || payload == null || payload.isBlank()) {
+                throw new IllegalArgumentException(
+                    "dead letter event, operation, and payload are required"
+                );
+            }
+        }
+    }
+
+    @FunctionalInterface
+    public interface DeadLetterHandler {
+        String replay(DeadLetter message);
+    }
+
+    // [Implementation 5-1] 재처리 성공 전까지 메시지 보존
+    // DeadLetterQueue는 handler가 성공하기 전까지 원본 메시지를 제거하지 않습니다.
+    public static final class DeadLetterQueue {
+        private final Queue<DeadLetter> messages = new ArrayDeque<>();
+
+        public void add(DeadLetter message) {
+            messages.add(message);
+        }
+
+        // [Implementation 5-2] 재처리 성공 후 메시지 제거
+        // handler가 값을 반환한 뒤에만 queue에서 메시지를 뺍니다.
+        public String replayNext(DeadLetterHandler handler) {
+            DeadLetter message = messages.element();
+            String result = handler.replay(message);
+            messages.remove();
+            return result;
+        }
+
+        public int size() {
+            return messages.size();
+        }
+    }
+
+    // [Implementation 6] deadline 안에서 재시도 실행
+    // Executor가 하나의 operation deadline 안에서 retry, backoff와 Circuit Breaker를 함께 적용합니다.
+    public static final class Executor {
+        private final VirtualClock clock;
+        private final long backoffMillis;
+
+        public Executor(VirtualClock clock, long backoffMillis) {
+            if (backoffMillis <= 0) {
+                throw new IllegalArgumentException("backoffMillis must be positive");
+            }
+            this.clock = clock;
+            this.backoffMillis = backoffMillis;
+        }
+
+        // [Implementation 6-1] 같은 operation ID로 일시 장애만 재시도
+        // 재시도할 때 operation ID를 바꾸지 않으며 TransientFailure 외의 결과는 반복하지 않습니다.
+        public String execute(
+            String operationId,
+            long deadlineMillis,
+            Dependency dependency,
+            CircuitBreaker breaker
+        ) {
+            while (true) {
+                if (clock.nowMillis() >= deadlineMillis) {
+                    throw new DeadlineExceeded();
+                }
+
+                breaker.beforeCall();
+                try {
+                    String result = dependency.call(operationId);
+                    breaker.recordSuccess();
+                    return result;
+                } catch (BusinessRejection rejection) {
+                    breaker.recordSuccess();
+                    throw rejection;
+                } catch (TransientFailure transientFailure) {
+                    breaker.recordTransientFailure();
+                    if (breaker.isOpen()) {
+                        throw new CircuitOpen();
+                    }
+                    if (clock.nowMillis() + backoffMillis >= deadlineMillis) {
+                        throw new DeadlineExceeded();
+                    }
+                    clock.advance(backoffMillis);
+                }
+            }
+        }
+    }
+
+    private RetryBudget() {
+    }
 }
