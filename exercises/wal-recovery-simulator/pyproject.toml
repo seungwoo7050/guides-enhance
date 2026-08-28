@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wal-recovery-simulator"
+version = "0.1.0"
+description = "Write-ahead logging and crash-recovery simulator"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["recovery"]
