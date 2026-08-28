@@ -13,7 +13,7 @@ sys.path.insert(0, str(SRC))
 from verified_algorithms.ranges import prefix_sums, range_sum, lower_bound
 from verified_algorithms.trees import RedBlackNode, red_black_height
 from verified_algorithms.optimization import knapsack_01, select_intervals, lcs_length
-from verified_algorithms.graphs import bfs_distances
+from verified_algorithms.graphs import bfs_distances, dijkstra
 def all_pairs_distances(
     size: int,
     edges: list[tuple[int, int, int]],
@@ -311,6 +311,27 @@ class GraphTests(unittest.TestCase):
             bfs_distances([], 0)
         with self.assertRaises(ValueError):
             bfs_distances([[1], [2]], 0)
+
+    def test_dijkstra_matches_independent_all_pairs(self) -> None:
+        source = random.Random(20250118)
+        for _ in range(45):
+            size = 8
+            edges = [
+                (left, right, source.randrange(0, 10))
+                for left in range(size)
+                for right in range(size)
+                if left != right and source.random() < 0.2
+            ]
+            self.assertEqual(
+                dijkstra(size, iter(edges), 0),
+                all_pairs_distances(size, edges)[0],
+            )
+
+    def test_dijkstra_rejects_negative_edges_and_bad_vertices(self) -> None:
+        with self.assertRaises(ValueError):
+            dijkstra(2, [(0, 1, -1)], 0)
+        with self.assertRaises(ValueError):
+            dijkstra(2, [(0, 2, 1)], 0)
 
 
 if __name__ == "__main__":
