@@ -1,0 +1,9 @@
+{
+  "page_size": 4096,
+  "tlb_entries": 2,
+  "mappings": {
+    "0x0": {"pfn": 10, "permissions": "rwx"},
+    "0x1": {"pfn": 20, "permissions": "rw"},
+    "0x2": {"pfn": 30, "permissions": "r"}
+  }
+}

@@ -1,10 +1,11 @@
 from __future__ import annotations
+import json
 from pathlib import Path
 import sys
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from processor_model import bits, cache, control, isa, perf, pipeline
+from processor_model import bits, cache, control, isa, perf, pipeline, vm
 
 class BitsTests(unittest.TestCase):
 
@@ -120,5 +121,17 @@ class CacheTests(unittest.TestCase):
         accesses = cache.parse_trace(['W 0', 'W 16'])
         result = cache.CacheSimulator(16, 4, 1).run(accesses)
         self.assertEqual(result['writebacks'], 1)
+
+class VirtualMemoryTests(unittest.TestCase):
+
+    def test_tlb_fault_permission_and_invalidation(self) -> None:
+        config = json.loads((ROOT / 'fixtures/vm/config.json').read_text(encoding='utf-8'))
+        mappings = {int(vpn, 0): vm.Mapping(entry['pfn'], set(entry['permissions'])) for vpn, entry in config['mappings'].items()}
+        operations = vm.parse_operations((ROOT / 'fixtures/vm/trace.txt').read_text(encoding='utf-8').splitlines())
+        result = vm.VirtualMemorySimulator(4096, 2, mappings).run(operations)
+        self.assertGreater(result['tlb_hits'], 0)
+        self.assertEqual(result['page_faults'], 2)
+        self.assertEqual(result['protection_faults'], 1)
+        self.assertGreaterEqual(result['tlb_invalidations'], 1)
 if __name__ == '__main__':
     unittest.main()
