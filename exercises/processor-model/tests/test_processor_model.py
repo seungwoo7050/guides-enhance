@@ -5,7 +5,7 @@ import sys
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from processor_model import bits, cache, control, isa, perf, pipeline, vm
+from processor_model import bits, cache, control, isa, perf, pipeline, predictor, rob, vm
 
 class BitsTests(unittest.TestCase):
 
@@ -133,5 +133,62 @@ class VirtualMemoryTests(unittest.TestCase):
         self.assertEqual(result['page_faults'], 2)
         self.assertEqual(result['protection_faults'], 1)
         self.assertGreaterEqual(result['tlb_invalidations'], 1)
+
+class BranchPredictorTests(unittest.TestCase):
+
+    def test_counter_learns_repeated_taken_branch(self) -> None:
+        model = predictor.TwoBitPredictor(4)
+        predictions = [model.update(256, True) for _ in range(4)]
+        self.assertEqual(predictions, [False, True, True, True])
+        self.assertEqual(model.run([])['counters'][0], 3)
+
+    def test_aliasing_is_deterministic(self) -> None:
+        model = predictor.TwoBitPredictor(2)
+        model.update(0, True)
+        self.assertTrue(model.predict(8))
+
+    def test_pc_and_table_shape_are_validated(self) -> None:
+        with self.assertRaises(ValueError):
+            predictor.TwoBitPredictor(3)
+        model = predictor.TwoBitPredictor(4)
+        with self.assertRaises(ValueError):
+            model.predict(2)
+
+class ReorderBufferTests(unittest.TestCase):
+
+    def test_out_of_order_completion_retires_in_program_order(self) -> None:
+        model = rob.ReorderBuffer(3)
+        first = model.issue('r1')
+        second = model.issue('r2')
+        model.complete(second, value=20)
+        registers: dict[str, int] = {}
+        self.assertEqual(model.retire(registers), [])
+        model.complete(first, value=10)
+        self.assertEqual(model.retire(registers), [first, second])
+        self.assertEqual(registers, {'r1': 10, 'r2': 20})
+
+    def test_fault_discards_itself_and_younger_entries(self) -> None:
+        model = rob.ReorderBuffer(4)
+        older = model.issue('r1')
+        faulting = model.issue('r2')
+        younger = model.issue('r3')
+        model.complete(older, value=7)
+        model.complete(faulting, fault='page fault')
+        model.complete(younger, value=9)
+        registers: dict[str, int] = {}
+        with self.assertRaises(rob.PreciseException) as raised:
+            model.retire(registers)
+        self.assertEqual(raised.exception.tag, faulting)
+        self.assertEqual(registers, {'r1': 7})
+        self.assertEqual(model.pending_tags(), [])
+
+    def test_full_buffer_and_duplicate_completion_are_rejected(self) -> None:
+        model = rob.ReorderBuffer(1)
+        tag = model.issue(None)
+        with self.assertRaises(BufferError):
+            model.issue('r1')
+        model.complete(tag)
+        with self.assertRaises(ValueError):
+            model.complete(tag)
 if __name__ == '__main__':
     unittest.main()
