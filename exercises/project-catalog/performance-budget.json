@@ -1,0 +1,4 @@
+{
+  "maximumInitialJavaScriptBytes": 800000,
+  "maximumDomNodes": 180
+}

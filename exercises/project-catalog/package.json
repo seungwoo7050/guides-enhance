@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "next dev",
     "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test",
     "build": "next build",
     "start": "next start"
   },
@@ -19,6 +21,7 @@
     "@types/node": "24.13.3",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
   }
 }
