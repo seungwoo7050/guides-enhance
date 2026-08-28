@@ -60,6 +60,13 @@ def create_repository(
     return repo, commit
 
 
+def write_manifest(path: Path, entries: list[dict[str, str]]) -> None:
+    path.write_text(
+        json.dumps({"repositories": entries}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def entry(name: str, repo: Path, commit: str) -> dict[str, str]:
     return {
         "name": name,
@@ -70,26 +77,88 @@ def entry(name: str, repo: Path, commit: str) -> dict[str, str]:
     }
 
 
-def main(argv):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("subject", Path(argv[1]).resolve())
-    subject = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(subject)
-    with tempfile.TemporaryDirectory(prefix="repository-check-") as directory:
-        root = Path(directory)
-        repo, commit = create_repository(root, "app")
-        valid = entry("app", repo, commit)
-        subject.verify_repository(valid)
-        for field, value in (("remote", "https://example.invalid/wrong.git"), ("commit", "0" * 40)):
-            invalid = dict(valid, **{field: value})
-            try: subject.verify_repository(invalid)
-            except subject.ManifestError: pass
-            else: raise AssertionError(field)
-        (repo / "dirty.txt").write_text("untracked")
-        try: subject.verify_repository(valid)
-        except subject.ManifestError: pass
-        else: raise AssertionError("dirty repository accepted")
-    print("repository validation passed")
+def expect(
+    implementation: Path,
+    manifest: Path,
+    success: bool,
+    fragment: str | None = None,
+) -> None:
+    process = run(
+        sys.executable,
+        str(implementation),
+        str(manifest),
+        check=False,
+    )
+    if success and process.returncode != 0:
+        raise AssertionError(
+            "valid manifest was rejected\n"
+            f"stdout:\n{process.stdout}\nstderr:\n{process.stderr}"
+        )
+    if not success and process.returncode == 0:
+        detail = fragment or "rejection"
+        raise AssertionError(f"invalid manifest was accepted (expected {detail})")
+    if fragment is not None:
+        combined = process.stdout + process.stderr
+        if fragment not in combined:
+            raise AssertionError(
+                f"expected error fragment {fragment!r}\noutput:\n{combined}"
+            )
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print("usage: test_manifest_check.py IMPLEMENTATION.py", file=sys.stderr)
+        return 2
+    implementation = Path(argv[1]).resolve()
+
+    with tempfile.TemporaryDirectory(prefix="release-manifest-test-") as temporary:
+        root = Path(temporary)
+        manifest = root / "manifest.json"
+
+        repo_a, commit_a = create_repository(root, "contracts")
+        repo_b, commit_b = create_repository(root, "service")
+        valid_entries = [
+            entry("contracts", repo_a, commit_a),
+            entry("service", repo_b, commit_b),
+        ]
+
+        write_manifest(manifest, valid_entries)
+        expect(implementation, manifest, True)
+
+        write_manifest(manifest, [valid_entries[0], dict(valid_entries[0])])
+        expect(implementation, manifest, False, "duplicate")
+
+        duplicate_path = [dict(valid_entries[0]), dict(valid_entries[1])]
+        duplicate_path[1]["path"] = duplicate_path[0]["path"]
+        write_manifest(manifest, duplicate_path)
+        expect(implementation, manifest, False, "duplicate")
+
+        wrong_remote = [dict(valid_entries[0]), dict(valid_entries[1])]
+        wrong_remote[0]["remote"] = "https://example.invalid/wrong.git"
+        write_manifest(manifest, wrong_remote)
+        expect(implementation, manifest, False, "remote")
+
+        write_manifest(manifest, valid_entries)
+        (repo_a / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+        expect(implementation, manifest, False, "clean")
+        (repo_a / "untracked.txt").unlink()
+
+        run("git", "checkout", "-q", "main", cwd=repo_a)
+        expect(implementation, manifest, False, "detached")
+        run("git", "checkout", "-q", "--detach", commit_a, cwd=repo_a)
+
+        wrong_commit = [dict(valid_entries[0]), dict(valid_entries[1])]
+        wrong_commit[0]["commit"] = "0" * 40
+        write_manifest(manifest, wrong_commit)
+        expect(implementation, manifest, False, "HEAD")
+
+        repo_c, commit_c = create_repository(root, "lightweight", annotated=False)
+        write_manifest(manifest, [entry("lightweight", repo_c, commit_c)])
+        expect(implementation, manifest, False, "annotated")
+
+    print("release-manifest tests passed")
     return 0
 
-if __name__ == "__main__": raise SystemExit(main(sys.argv))
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
