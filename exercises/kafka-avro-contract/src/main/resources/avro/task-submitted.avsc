@@ -1,0 +1,10 @@
+{
+  "type": "record",
+  "name": "TaskSubmitted",
+  "namespace": "dev.guides.events.v1",
+  "fields": [
+    {"name": "taskId", "type": "string"},
+    {"name": "itemCount", "type": "long"},
+    {"name": "category", "type": "string"}
+  ]
+}
