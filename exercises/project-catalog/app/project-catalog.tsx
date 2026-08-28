@@ -2,13 +2,16 @@
 
 import {
   FormEvent,
+  KeyboardEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState
 } from "react";
 import {
   ContractError,
+  parseProjectEnvelope,
   parseProjectQuery,
   parseSearchResult,
   toProjectSearchParams
@@ -18,11 +21,14 @@ import {
   completeCatalogRequest,
   createCatalogState,
   failCatalogRequest,
+  replaceProjectInCatalogState,
   selectCatalogResult
 } from "../lib/catalog-model";
 import { createRequestCoordinator } from "../lib/request-coordinator";
 import type {
+  Project,
   ProjectQuery,
+  RenameOutcome,
   SearchResult
 } from "../lib/project-types";
 
@@ -105,6 +111,54 @@ export function ProjectCatalog({
     await runSearch(query, { writeHistory: true });
   }
 
+  // [Implementation 8-2]
+  // 제목을 먼저 표시하되, 실패하면 이전 서버 값으로 되돌리고 충돌하면 최신 서버 값과 입력 초안을 함께 남깁니다.
+  async function rename(project: Project, title: string): Promise<RenameOutcome> {
+    const optimistic = { ...project, title };
+    setCatalog((current) => replaceProjectInCatalogState(current, optimistic));
+    setAnnouncement("Saving changes.");
+
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(project.id)}`, {
+        method: "PATCH",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ title, version: project.version })
+      });
+      const raw: unknown = await response.json().catch(() => null);
+
+      if (response.status === 409) {
+        const latest = parseProjectEnvelope(raw).project;
+        setCatalog((current) => replaceProjectInCatalogState(current, latest));
+        const message =
+          "Another change was saved first. The latest server title is visible and your draft is preserved.";
+        setAnnouncement(message);
+        return { kind: "conflict", project: latest, message };
+      }
+
+      if (!response.ok) {
+        setCatalog((current) => replaceProjectInCatalogState(current, project));
+        const message =
+          "The title could not be saved. The previous server value was restored and your draft is preserved.";
+        setAnnouncement(message);
+        return { kind: "error", message };
+      }
+
+      const saved = parseProjectEnvelope(raw).project;
+      setCatalog((current) => replaceProjectInCatalogState(current, saved));
+      setAnnouncement("Title saved.");
+      return { kind: "success", project: saved };
+    } catch {
+      setCatalog((current) => replaceProjectInCatalogState(current, project));
+      const message =
+        "The title could not be saved. The previous server value was restored and your draft is preserved.";
+      setAnnouncement(message);
+      return { kind: "error", message };
+    }
+  }
+
   const result = selectCatalogResult(catalog);
   const pending = catalog.status === "pending";
 
@@ -114,7 +168,7 @@ export function ProjectCatalog({
         <p className="eyebrow">Project Catalog</p>
         <h1>Project Catalog</h1>
         <p>
-          Share search filters through the URL and keep the latest search response.
+          Share search filters through the URL and edit titles with response-order and version checks.
         </p>
       </header>
 
@@ -153,12 +207,121 @@ export function ProjectCatalog({
         <ul className="projects">
           {result.projects.map((project) => (
             <li key={project.id}>
-              <article><h2>{project.title}</h2><p>{project.summary}</p><span>{project.status}</span></article>
+              <ProjectEditor project={project} onRename={rename} />
             </li>
           ))}
         </ul>
       )}
     </main>
+  );
+}
+
+// [Implementation 9]
+// 편집 초안과 저장 상태를 관리하며, 열기·취소·성공·실패 뒤 초점을 알맞은 요소로 옮깁니다.
+function ProjectEditor({
+  project,
+  onRename
+}: {
+  project: Project;
+  onRename(project: Project, title: string): Promise<RenameOutcome>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(project.title);
+  const [saving, setSaving] = useState(false);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const titleInput = useRef<HTMLInputElement>(null);
+  const shouldRestoreEditButtonFocus = useRef(false);
+  const articleLabel = getArticleAccessibleLabel(project.title);
+
+  useEffect(() => {
+    if (!editing) setDraftTitle(project.title);
+  }, [editing, project.title]);
+
+  useEffect(() => {
+    if (editing) titleInput.current?.focus();
+  }, [editing]);
+
+  // 편집 폼이 DOM에서 사라진 뒤에만 같은 위치의 버튼으로 초점을 옮길 수 있습니다.
+  useLayoutEffect(() => {
+    if (editing || !shouldRestoreEditButtonFocus.current) return;
+    shouldRestoreEditButtonFocus.current = false;
+    editButton.current?.focus();
+  }, [editing]);
+
+  function cancelEditing() {
+    setDraftTitle(project.title);
+    shouldRestoreEditButtonFocus.current = true;
+    setEditing(false);
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const title = draftTitle.trim();
+    if (!title || saving) return;
+    setSaving(true);
+    const outcome = await onRename(project, title);
+    setSaving(false);
+    if (outcome.kind === "success") {
+      setDraftTitle(outcome.project.title);
+      shouldRestoreEditButtonFocus.current = true;
+      setEditing(false);
+    } else {
+      // 저장 실패가 화면에 반영된 다음 입력칸으로 초점을 돌려 초안을 계속 수정할 수 있게 합니다.
+      requestAnimationFrame(() => titleInput.current?.focus());
+    }
+  }
+
+  function handleEditorKeyDown(event: KeyboardEvent<HTMLFormElement>) {
+    if (event.key === "Escape" && !saving) {
+      event.preventDefault();
+      cancelEditing();
+    }
+  }
+
+  return (
+    <article aria-label={articleLabel}>
+      <div className="title-row">
+        <h2>{project.title}</h2>
+        <span>{project.status === "active" ? "Active" : "Paused"}</span>
+      </div>
+      <p>{project.summary}</p>
+      {editing ? (
+        <form className="editor" onSubmit={save} onKeyDown={handleEditorKeyDown}>
+          <p className="server-value">
+            Latest server title: <strong>{project.title}</strong>
+          </p>
+          <label htmlFor={`title-${project.id}`}>Project title</label>
+          <input
+            ref={titleInput}
+            id={`title-${project.id}`}
+            name="title"
+            required
+            maxLength={80}
+            value={draftTitle}
+            onChange={(event) => setDraftTitle(event.target.value)}
+          />
+          <div className="actions">
+            <button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button type="button" disabled={saving} onClick={cancelEditing}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button
+          ref={editButton}
+          type="button"
+          onClick={() => {
+            setDraftTitle(project.title);
+            setEditing(true);
+          }}
+        >
+          Edit title
+        </button>
+      )}
+    </article>
   );
 }
 
@@ -173,3 +336,9 @@ function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+function getArticleAccessibleLabel(title: string) {
+  const safeTitle = title.toLocaleLowerCase("en-US").includes("status")
+    ? title.replace(/status/gi, "state")
+    : title;
+  return `${safeTitle} project`;
+}
