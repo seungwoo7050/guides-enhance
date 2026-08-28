@@ -1,0 +1,20 @@
+# [Implementation 1] Define package metadata, Python requirements, and the console script.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-report"
+version = "1.0.0"
+description = "Aggregate validated CSV or JSON records into deterministic reports"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+data-report = "data_report.cli:main"
+
+[tool.setuptools]
+packages = ["data_report"]
+
+[tool.setuptools.package-data]
+data_report = ["py.typed"]
