@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
+from math import ceil
 from typing import Generic, TypeVar
 
 V = TypeVar("V")
@@ -106,3 +107,94 @@ class BPlusTree(Generic[V]):
         node.keys = node.keys[:middle]
         node.children = node.children[: middle + 1]
         self._insert_in_parent(node, promote, right, path)
+
+    # [Implementation 6] 단일 key와 범위를 조회합니다.
+    # 범위 조회는 시작 leaf를 한 번 찾은 뒤 next를 따라가며 root를 다시 탐색하지 않습니다.
+    def get(self, key: int) -> V:
+        key = self._validate_key(key)
+        leaf, _ = self._find_leaf(key)
+        index = bisect_left(leaf.keys, key)
+        if index == len(leaf.keys) or leaf.keys[index] != key:
+            raise KeyError(key)
+        return leaf.values[index]
+
+    def range(self, start: int, end: int) -> list[tuple[int, V]]:
+        start = self._validate_key(start)
+        end = self._validate_key(end)
+        if start > end:
+            return []
+        leaf, _ = self._find_leaf(start)
+        result: list[tuple[int, V]] = []
+        while leaf is not None:
+            for key, value in zip(leaf.keys, leaf.values, strict=True):
+                if key < start:
+                    continue
+                if key > end:
+                    return result
+                result.append((key, value))
+            leaf = leaf.next
+        return result
+
+    # [Implementation 7] tree의 불변식을 검사합니다.
+    # key 순서와 최소 점유율, child 범위, leaf 깊이, separator, next 연결을 함께 확인합니다.
+    def validate(self) -> None:
+        leaf_depths: set[int] = set()
+        leaves: list[Node[V]] = []
+        minimum_leaf_keys = ceil(self.max_keys / 2)
+        minimum_internal_children = ceil(self.order / 2)
+
+        def strictly_increasing(keys: list[int]) -> bool:
+            return all(left < right for left, right in zip(keys, keys[1:]))
+
+        def walk(
+            node: Node[V],
+            depth: int,
+            low: int | None,
+            high: int | None,
+            *,
+            root: bool,
+        ) -> tuple[int, int]:
+            if not strictly_increasing(node.keys) or len(node.keys) > self.max_keys:
+                raise AssertionError("invalid key ordering or node overflow")
+
+            if node.leaf:
+                if len(node.keys) != len(node.values) or node.children or node.next is node:
+                    raise AssertionError("invalid leaf shape")
+                if not root and len(node.keys) < minimum_leaf_keys:
+                    raise AssertionError("underfull non-root leaf")
+                if not node.keys and not root:
+                    raise AssertionError("empty non-root leaf")
+                for key in node.keys:
+                    if low is not None and key < low:
+                        raise AssertionError("leaf key below lower bound")
+                    if high is not None and key >= high:
+                        raise AssertionError("leaf key above upper bound")
+                leaf_depths.add(depth)
+                leaves.append(node)
+                return (node.keys[0], node.keys[-1]) if node.keys else (0, 0)
+
+            if node.values or node.next is not None or len(node.children) != len(node.keys) + 1:
+                raise AssertionError("invalid internal shape")
+            if root:
+                if len(node.children) < 2:
+                    raise AssertionError("internal root must have at least two children")
+            elif len(node.children) < minimum_internal_children:
+                raise AssertionError("underfull non-root internal node")
+
+            ranges: list[tuple[int, int]] = []
+            for index, child in enumerate(node.children):
+                child_low = low if index == 0 else node.keys[index - 1]
+                child_high = high if index == len(node.children) - 1 else node.keys[index]
+                ranges.append(walk(child, depth + 1, child_low, child_high, root=False))
+            for index, separator in enumerate(node.keys):
+                if ranges[index + 1][0] != separator:
+                    raise AssertionError("separator is not right subtree minimum")
+            return ranges[0][0], ranges[-1][1]
+
+        walk(self.root, 0, None, None, root=True)
+        if len(leaf_depths) != 1:
+            raise AssertionError("leaves are not at the same depth")
+        for index, leaf in enumerate(leaves):
+            expected = leaves[index + 1] if index + 1 < len(leaves) else None
+            if leaf.next is not expected:
+                raise AssertionError("broken leaf chain")
