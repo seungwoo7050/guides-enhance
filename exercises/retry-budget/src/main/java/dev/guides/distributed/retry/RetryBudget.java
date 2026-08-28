@@ -98,4 +98,73 @@ public final class RetryBudget {
             return List.copyOf(receivedOperationIds);
         }
     }
+
+    // [Implementation 4] Circuit Breaker 상태
+    // CircuitBreaker가 연속 일시 장애 수와 OPEN·HALF_OPEN probe 시각을 보관합니다.
+    public static final class CircuitBreaker {
+        public enum State {
+            CLOSED,
+            OPEN,
+            HALF_OPEN
+        }
+
+        private final int failureThreshold;
+        private final long openMillis;
+        private final VirtualClock clock;
+        private int consecutiveFailures;
+        private long nextProbeAt;
+        private State state = State.CLOSED;
+
+        public CircuitBreaker(int failureThreshold) {
+            this(failureThreshold, Long.MAX_VALUE, new VirtualClock());
+        }
+
+        public CircuitBreaker(int failureThreshold, long openMillis, VirtualClock clock) {
+            if (failureThreshold <= 0) {
+                throw new IllegalArgumentException("failureThreshold must be positive");
+            }
+            if (openMillis <= 0) {
+                throw new IllegalArgumentException("openMillis must be positive");
+            }
+            this.failureThreshold = failureThreshold;
+            this.openMillis = openMillis;
+            this.clock = clock;
+        }
+
+        // [Implementation 4-1] OPEN 대기 시간과 HALF_OPEN probe
+        // OPEN 시간이 끝난 경우에만 HALF_OPEN으로 바꾸고 probe 한 건을 허용합니다.
+        public void beforeCall() {
+            if (state == State.OPEN && clock.nowMillis() >= nextProbeAt) {
+                state = State.HALF_OPEN;
+            }
+            if (state == State.OPEN) {
+                throw new CircuitOpen();
+            }
+        }
+
+        // [Implementation 4-2] 응답 후 실패 횟수 초기화
+        // 업무 거절을 포함해 의존 서비스가 응답하면 일시 장애 횟수를 지우고 회로를 닫습니다.
+        public void recordSuccess() {
+            consecutiveFailures = 0;
+            state = State.CLOSED;
+        }
+
+        // [Implementation 4-3] 일시 장애만 실패로 집계
+        // TransientFailure만 횟수에 포함하고 실패한 probe에는 새 OPEN 시간을 설정합니다.
+        public void recordTransientFailure() {
+            consecutiveFailures++;
+            if (state == State.HALF_OPEN || consecutiveFailures >= failureThreshold) {
+                state = State.OPEN;
+                nextProbeAt = clock.nowMillis() + openMillis;
+            }
+        }
+
+        public boolean isOpen() {
+            return state == State.OPEN;
+        }
+
+        public State state() {
+            return state;
+        }
+    }
 }
