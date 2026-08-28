@@ -2,6 +2,7 @@
 from __future__ import annotations
 import unittest
 from kernel_model.lifecycle import KernelState, TaskState
+from kernel_model.synchronization import ConditionChannel, CountingSemaphore, SynchronizationError, WaitToken
 
 class LifecycleTests(unittest.TestCase):
 
@@ -20,5 +21,36 @@ class LifecycleTests(unittest.TestCase):
         snapshot = {'running': 'A', 'ready': ['A'], 'wait_queues': {}, 'completed': [], 'tasks': {'A': {'state': 'running'}}}
         with self.assertRaisesRegex(ValueError, 'running task also appears'):
             KernelState.validate_snapshot(snapshot)
+
+class SynchronizationTests(unittest.TestCase):
+
+    def test_generation_closes_lost_wakeup_window(self) -> None:
+        channel = ConditionChannel('items')
+        token = channel.prepare_wait()
+        self.assertIsNone(channel.notify_one())
+        self.assertFalse(channel.commit_wait('consumer', token))
+        self.assertNotIn('consumer', channel.waiters)
+        fresh = channel.prepare_wait()
+        self.assertTrue(channel.commit_wait('consumer', fresh))
+        self.assertEqual(channel.notify_all(), ['consumer'])
+
+    def test_semaphore_hands_permit_to_waiter(self) -> None:
+        semaphore = CountingSemaphore(1)
+        self.assertTrue(semaphore.acquire('A'))
+        self.assertFalse(semaphore.acquire('B'))
+        self.assertEqual(semaphore.release('A'), 'B')
+        self.assertIn('B', semaphore.granted)
+        self.assertIsNone(semaphore.release('B'))
+        self.assertEqual(semaphore.permits, 1)
+        semaphore.assert_invariants()
+
+    def test_rejects_cross_channel_token_and_duplicate_owner(self) -> None:
+        channel = ConditionChannel('items')
+        with self.assertRaisesRegex(SynchronizationError, 'another condition channel'):
+            channel.commit_wait('A', WaitToken('space', 0))
+        semaphore = CountingSemaphore(1)
+        self.assertTrue(semaphore.acquire('A'))
+        with self.assertRaisesRegex(SynchronizationError, 'more than once'):
+            semaphore.acquire('A')
 if __name__ == '__main__':
     unittest.main()

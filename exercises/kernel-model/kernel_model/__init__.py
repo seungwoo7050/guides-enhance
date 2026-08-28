@@ -1,5 +1,6 @@
 """Public exports for the currently implemented modules."""
 
 from .lifecycle import KernelState, StateInvariantError, TaskState
+from .synchronization import ConditionChannel, CountingSemaphore
 
-__all__ = ['KernelState', 'StateInvariantError', 'TaskState']
+__all__ = ['ConditionChannel', 'CountingSemaphore', 'KernelState', 'StateInvariantError', 'TaskState']
