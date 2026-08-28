@@ -1,0 +1,6 @@
+li r1, 1
+beq r1, r1, target @taken
+addi r4, r0, 99
+addi r5, r0, 88
+target:
+addi r4, r0, 7

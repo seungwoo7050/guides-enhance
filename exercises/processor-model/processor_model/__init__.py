@@ -2,4 +2,4 @@
 
 
 
-__all__ = ['bits', 'control', 'isa', 'perf']
+__all__ = ['bits', 'control', 'isa', 'perf', 'pipeline']

@@ -4,7 +4,7 @@ import sys
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from processor_model import bits, control, isa, perf
+from processor_model import bits, control, isa, perf, pipeline
 
 class BitsTests(unittest.TestCase):
 
@@ -70,5 +70,40 @@ class ControlTests(unittest.TestCase):
         result = control.signals('lw')
         self.assertEqual(result['mem_read'], 1)
         self.assertEqual(result['writeback'], 'memory')
+
+class PipelineTests(unittest.TestCase):
+
+    def _trace(self, name: str) -> list[isa.Instruction]:
+        return isa.parse_pipeline_trace((ROOT / f'fixtures/traces/{name}').read_text(encoding='utf-8').splitlines())
+
+    def test_forwarding_only_stalls_load_use(self) -> None:
+        trace = self._trace('pipeline-load-use.trace')
+        result = pipeline.simulate(trace, forwarding='full').as_dict()
+        self.assertEqual(result['retired'], 3)
+        self.assertEqual(result['data_stalls'], 1)
+
+    def test_without_forwarding_needs_more_stalls(self) -> None:
+        trace = self._trace('pipeline-load-use.trace')
+        full = pipeline.simulate(trace, forwarding='full').as_dict()
+        none = pipeline.simulate(trace, forwarding='none').as_dict()
+        self.assertGreater(none['cycles'], full['cycles'])
+        self.assertGreater(none['data_stalls'], full['data_stalls'])
+
+    def test_taken_branch_flushes_younger_instruction(self) -> None:
+        trace = self._trace('pipeline-branch.trace')
+        result = pipeline.simulate(trace, branch_penalty=2).as_dict()
+        self.assertEqual(result['retired'], 3)
+        self.assertEqual(result['flushes'], 2)
+        self.assertEqual(result['control_stalls'], 2)
+        wrong_id = result['timeline'][2]
+        wrong_if = result['timeline'][3]
+        target = result['timeline'][4]
+        self.assertIn('ID*', wrong_id.values())
+        self.assertIn('IF*', wrong_if.values())
+        self.assertIn('WB', target.values())
+
+    def test_taken_annotation_requires_control_instruction(self) -> None:
+        with self.assertRaises(ValueError):
+            isa.parse_pipeline_trace(['add r1, r2, r3 @taken'])
 if __name__ == '__main__':
     unittest.main()
