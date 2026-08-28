@@ -1,0 +1,17 @@
+{
+  "name": "@runtime-workspace/demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@runtime-workspace/math": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "5.8.3",
+    "tsx": "4.19.2"
+  }
+}

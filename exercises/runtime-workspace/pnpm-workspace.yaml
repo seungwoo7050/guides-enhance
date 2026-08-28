@@ -1,0 +1,4 @@
+# [Implementation 1] Workspace package list
+packages:
+  - apps/*
+  - packages/*
