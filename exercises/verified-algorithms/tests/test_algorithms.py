@@ -11,11 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from verified_algorithms.ranges import prefix_sums, range_sum, lower_bound
-from verified_algorithms.trees import RedBlackNode, red_black_height
-from verified_algorithms.optimization import knapsack_01, select_intervals, lcs_length
-from verified_algorithms.graphs import bfs_distances, dijkstra, kruskal_mst, bellman_ford, max_flow
-from verified_algorithms.strings import kmp_find
+import verified_algorithms as subject
+
+
+# [Implementation 14]
+# Independent contract verification
+# 후보 구현과 다른 계산 방법을 사용해 같은 결함을 공유할 가능성을 줄입니다.
 def all_pairs_distances(
     size: int,
     edges: list[tuple[int, int, int]],
@@ -114,7 +115,7 @@ def valid_red_black_tree(root: object) -> tuple[bool, int | None]:
 
 def complete_tree(colors: tuple[str, ...]) -> object:
     nodes = {
-        key: RedBlackNode(key, color)
+        key: subject.RedBlackNode(key, color)
         for key, color in zip((4, 2, 6, 1, 3, 5, 7), colors)
     }
     nodes[4].left, nodes[4].right = nodes[2], nodes[6]
@@ -211,6 +212,7 @@ def brute_min_cut(capacity: list[list[int]], source: int, sink: int) -> int:
     return best
 
 
+# 최대 유량 값만 맞아도 잘못된 matrix를 반환할 수 있으므로 capacity와 보존 법칙을 따로 검사합니다.
 def flow_certificate_errors(
     capacity: list[list[int]],
     source: int,
@@ -282,27 +284,27 @@ def brute_lcs_length(left: str, right: str) -> int:
 
 class DataStructureTests(unittest.TestCase):
     def test_prefix_contract_and_random_ranges(self) -> None:
-        self.assertEqual(prefix_sums([]), [0])
-        self.assertEqual(prefix_sums([3, -2, 5]), [0, 3, 1, 6])
+        self.assertEqual(subject.prefix_sums([]), [0])
+        self.assertEqual(subject.prefix_sums([3, -2, 5]), [0, 3, 1, 6])
 
         source = random.Random(20241214)
         values = [source.randrange(-20, 21) for _ in range(80)]
-        prefix = prefix_sums(values)
+        prefix = subject.prefix_sums(values)
         self.assertEqual(len(prefix), len(values) + 1)
         for _ in range(250):
             start = source.randrange(len(values) + 1)
             stop = source.randrange(start, len(values) + 1)
             self.assertEqual(
-                range_sum(prefix, start, stop),
+                subject.range_sum(prefix, start, stop),
                 sum(values[start:stop]),
             )
 
     def test_range_sum_rejects_invalid_half_open_ranges(self) -> None:
-        prefix = prefix_sums([1, 2, 3])
+        prefix = subject.prefix_sums([1, 2, 3])
         for start, stop in [(-1, 1), (2, 1), (0, 4), (4, 4)]:
             with self.subTest(start=start, stop=stop):
                 with self.assertRaises(ValueError):
-                    range_sum(prefix, start, stop)
+                    subject.range_sum(prefix, start, stop)
 
     def test_lower_bound_matches_bisect_with_duplicates(self) -> None:
         from bisect import bisect_left
@@ -313,42 +315,42 @@ class DataStructureTests(unittest.TestCase):
         for values in cases:
             for target in range(-35, 36):
                 self.assertEqual(
-                    lower_bound(values, target),
+                    subject.lower_bound(values, target),
                     bisect_left(values, target),
                 )
 
     def test_red_black_all_complete_tree_colorings(self) -> None:
-        self.assertEqual(red_black_height(None), 1)
+        self.assertEqual(subject.red_black_height(None), 1)
         for colors in product(("red", "black"), repeat=7):
             tree = complete_tree(colors)
             expected_valid, expected_height = valid_red_black_tree(tree)
             if expected_valid:
                 self.assertEqual(
-                    red_black_height(tree),
+                    subject.red_black_height(tree),
                     expected_height,
                 )
             else:
                 with self.assertRaises(ValueError):
-                    red_black_height(tree)
+                    subject.red_black_height(tree)
 
     def test_red_black_rejects_bst_and_color_errors(self) -> None:
         with self.assertRaises(ValueError):
-            red_black_height(RedBlackNode(2, "blue"))
+            subject.red_black_height(subject.RedBlackNode(2, "blue"))
 
-        bad_order = RedBlackNode(
+        bad_order = subject.RedBlackNode(
             4,
             "black",
-            left=RedBlackNode(5, "black"),
-            right=RedBlackNode(6, "black"),
+            left=subject.RedBlackNode(5, "black"),
+            right=subject.RedBlackNode(6, "black"),
         )
         with self.assertRaises(ValueError):
-            red_black_height(bad_order)
+            subject.red_black_height(bad_order)
 
 
 class DesignTechniqueTests(unittest.TestCase):
     def test_knapsack_matches_subset_enumeration(self) -> None:
         source = random.Random(20250130)
-        self.assertEqual(knapsack_01([], 0), 0)
+        self.assertEqual(subject.knapsack_01([], 0), 0)
         for _ in range(70):
             items = [
                 (source.randrange(1, 8), source.randrange(-3, 16))
@@ -356,25 +358,25 @@ class DesignTechniqueTests(unittest.TestCase):
             ]
             capacity = source.randrange(0, 20)
             self.assertEqual(
-                knapsack_01(items, capacity),
+                subject.knapsack_01(items, capacity),
                 brute_knapsack(items, capacity),
             )
 
     def test_knapsack_rejects_invalid_contract(self) -> None:
         with self.assertRaises(ValueError):
-            knapsack_01([], -1)
+            subject.knapsack_01([], -1)
         with self.assertRaises(ValueError):
-            knapsack_01([(0, 5)], 10)
+            subject.knapsack_01([(0, 5)], 10)
         with self.assertRaises(ValueError):
-            knapsack_01([(-2, 5)], 10)
+            subject.knapsack_01([(-2, 5)], 10)
 
     def test_interval_selection_matches_exhaustive_optimum(self) -> None:
         source = random.Random(20250201)
         specific = [(0, 100), (1, 2), (2, 3), (3, 4)]
-        self.assertEqual(len(select_intervals(specific)), 3)
+        self.assertEqual(len(subject.select_intervals(specific)), 3)
         tied = [(1, 3), (0, 3), (3, 4)]
         self.assertEqual(
-            select_intervals(tied),
+            subject.select_intervals(tied),
             [(0, 3), (3, 4)],
         )
         for _ in range(80):
@@ -382,7 +384,7 @@ class DesignTechniqueTests(unittest.TestCase):
             for _ in range(8):
                 start = source.randrange(0, 12)
                 intervals.append((start, start + source.randrange(1, 5)))
-            selected = select_intervals(intervals)
+            selected = subject.select_intervals(intervals)
             self.assertEqual(len(selected), brute_interval_count(intervals))
             self.assertEqual(
                 selected,
@@ -398,13 +400,13 @@ class DesignTechniqueTests(unittest.TestCase):
     def test_interval_selection_rejects_invalid_ranges(self) -> None:
         for intervals in [[(1, 1)], [(3, 2)], [(0, 1), (5, 4)]]:
             with self.assertRaises(ValueError):
-                select_intervals(intervals)
+                subject.select_intervals(intervals)
 
     def test_lcs_matches_subsequence_enumeration(self) -> None:
         source = random.Random(20250205)
-        self.assertEqual(lcs_length("", ""), 0)
-        self.assertEqual(lcs_length("abc", "abc"), 3)
-        self.assertEqual(lcs_length("abc", "def"), 0)
+        self.assertEqual(subject.lcs_length("", ""), 0)
+        self.assertEqual(subject.lcs_length("abc", "abc"), 3)
+        self.assertEqual(subject.lcs_length("abc", "def"), 0)
         for _ in range(100):
             left = "".join(
                 source.choice("abcd")
@@ -415,7 +417,7 @@ class DesignTechniqueTests(unittest.TestCase):
                 for _ in range(source.randrange(9))
             )
             self.assertEqual(
-                lcs_length(left, right),
+                subject.lcs_length(left, right),
                 brute_lcs_length(left, right),
             )
 
@@ -423,7 +425,7 @@ class DesignTechniqueTests(unittest.TestCase):
 class GraphTests(unittest.TestCase):
     def test_bfs_distances_against_unit_weight_floyd_warshall(self) -> None:
         source = random.Random(20250111)
-        self.assertEqual(bfs_distances([[]], 0), [0])
+        self.assertEqual(subject.bfs_distances([[]], 0), [0])
         for _ in range(50):
             size = 7
             graph = [
@@ -440,13 +442,13 @@ class GraphTests(unittest.TestCase):
                 for target in neighbors
             ]
             expected = all_pairs_distances(size, edges)[0]
-            self.assertEqual(bfs_distances(graph, 0), expected)
+            self.assertEqual(subject.bfs_distances(graph, 0), expected)
 
     def test_bfs_rejects_invalid_vertices(self) -> None:
         with self.assertRaises(ValueError):
-            bfs_distances([], 0)
+            subject.bfs_distances([], 0)
         with self.assertRaises(ValueError):
-            bfs_distances([[1], [2]], 0)
+            subject.bfs_distances([[1], [2]], 0)
 
     def test_dijkstra_matches_independent_all_pairs(self) -> None:
         source = random.Random(20250118)
@@ -459,15 +461,15 @@ class GraphTests(unittest.TestCase):
                 if left != right and source.random() < 0.2
             ]
             self.assertEqual(
-                dijkstra(size, iter(edges), 0),
+                subject.dijkstra(size, iter(edges), 0),
                 all_pairs_distances(size, edges)[0],
             )
 
     def test_dijkstra_rejects_negative_edges_and_bad_vertices(self) -> None:
         with self.assertRaises(ValueError):
-            dijkstra(2, [(0, 1, -1)], 0)
+            subject.dijkstra(2, [(0, 1, -1)], 0)
         with self.assertRaises(ValueError):
-            dijkstra(2, [(0, 2, 1)], 0)
+            subject.dijkstra(2, [(0, 2, 1)], 0)
 
     def test_bellman_ford_handles_negative_edges_and_cycle_contract(self) -> None:
         source = random.Random(20250125)
@@ -480,19 +482,19 @@ class GraphTests(unittest.TestCase):
                 if source.random() < 0.35
             ]
             self.assertEqual(
-                bellman_ford(size, edges, 0),
+                subject.bellman_ford(size, edges, 0),
                 all_pairs_distances(size, edges)[0],
             )
 
         with self.assertRaises(ValueError):
-            bellman_ford(
+            subject.bellman_ford(
                 3,
                 [(0, 1, 1), (1, 2, -2), (2, 1, -2)],
                 0,
             )
 
         self.assertEqual(
-            bellman_ford(
+            subject.bellman_ford(
                 4,
                 [(0, 1, 3), (2, 3, -2), (3, 2, -2)],
                 0,
@@ -501,7 +503,7 @@ class GraphTests(unittest.TestCase):
         )
 
     def test_kruskal_matches_spanning_tree_enumeration(self) -> None:
-        self.assertEqual(kruskal_mst(0, []), (0, []))
+        self.assertEqual(subject.kruskal_mst(0, []), (0, []))
         source = random.Random(20250215)
         for _ in range(40):
             size = 5
@@ -516,7 +518,7 @@ class GraphTests(unittest.TestCase):
                 for right in range(left + 1, size)
                 if (left, right) not in present and source.random() < 0.35
             )
-            weight, chosen = kruskal_mst(size, iter(edges))
+            weight, chosen = subject.kruskal_mst(size, iter(edges))
             self.assertEqual(weight, brute_mst_weight(size, edges))
             self.assertEqual(len(chosen), size - 1)
             available = Counter(
@@ -533,7 +535,7 @@ class GraphTests(unittest.TestCase):
 
     def test_kruskal_rejects_disconnected_graph(self) -> None:
         with self.assertRaises(ValueError):
-            kruskal_mst(4, [(0, 1, 1), (2, 3, 1)])
+            subject.kruskal_mst(4, [(0, 1, 1), (2, 3, 1)])
 
     def test_max_flow_value_and_certificate_match_all_cuts(self) -> None:
         source = random.Random(20250222)
@@ -543,7 +545,7 @@ class GraphTests(unittest.TestCase):
             [0, 0, 0, 3],
             [0, 0, 0, 0],
         ]
-        value, flow = max_flow(specific, 0, 3)
+        value, flow = subject.max_flow(specific, 0, 3)
         self.assertEqual(value, 5)
         self.assertEqual(
             flow_certificate_errors(specific, 0, 3, value, flow),
@@ -560,7 +562,7 @@ class GraphTests(unittest.TestCase):
                 ]
                 for left in range(size)
             ]
-            value, flow = max_flow(capacity, 0, size - 1)
+            value, flow = subject.max_flow(capacity, 0, size - 1)
             self.assertEqual(
                 value,
                 brute_min_cut(capacity, 0, size - 1),
@@ -578,10 +580,10 @@ class GraphTests(unittest.TestCase):
 
     def test_max_flow_contract_errors(self) -> None:
         with self.assertRaises(ValueError):
-            max_flow([[0, 1], [0]], 0, 1)
+            subject.max_flow([[0, 1], [0]], 0, 1)
         with self.assertRaises(ValueError):
-            max_flow([[0, -1], [0, 0]], 0, 1)
-        self.assertEqual(max_flow([[0]], 0, 0), (0, [[0]]))
+            subject.max_flow([[0, -1], [0, 0]], 0, 1)
+        self.assertEqual(subject.max_flow([[0]], 0, 0), (0, [[0]]))
 
 
 class StringTests(unittest.TestCase):
@@ -595,7 +597,7 @@ class StringTests(unittest.TestCase):
             ("needle in a haystack", "hay"),
         ]
         for text, pattern in cases:
-            self.assertEqual(kmp_find(text, pattern), text.find(pattern))
+            self.assertEqual(subject.kmp_find(text, pattern), text.find(pattern))
 
         source = random.Random(20250208)
         alphabet = "abca"
@@ -609,7 +611,7 @@ class StringTests(unittest.TestCase):
                 for _ in range(source.randrange(10))
             )
             self.assertEqual(
-                kmp_find(text, pattern),
+                subject.kmp_find(text, pattern),
                 text.find(pattern),
             )
 
