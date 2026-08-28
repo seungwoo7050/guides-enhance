@@ -2,6 +2,8 @@
 from __future__ import annotations
 import unittest
 from kernel_model.deadlock import DeadlockInputError, detect_deadlocked, find_wait_cycle, safe_sequence
+from kernel_model.filesystem import FileSystemModel
+from kernel_model.journal import Journal, JournalError
 from kernel_model.lifecycle import KernelState, TaskState
 from kernel_model.paging import FaultKind, MemoryFault, MemoryManager, simulate_replacement
 from kernel_model.scheduler import JobSpec, Policy, simulate
@@ -140,5 +142,41 @@ class PagingTests(unittest.TestCase):
         self.assertEqual(results['fifo'].faults, 5)
         self.assertEqual(results['lru'].faults, 5)
         self.assertTrue(4 <= results['clock'].faults <= 6)
+
+class StorageTests(unittest.TestCase):
+
+    def test_file_and_directory_durability_are_separate(self) -> None:
+        filesystem = FileSystemModel()
+        filesystem.create('draft', 'v1')
+        filesystem.fsync_file('draft')
+        filesystem.crash_recover()
+        self.assertNotIn('draft', filesystem.directory)
+        filesystem.create('stable', 'v2')
+        filesystem.fsync_file('stable')
+        filesystem.fsync_directory()
+        filesystem.write('stable', 'v3')
+        filesystem.crash_recover()
+        self.assertEqual(filesystem.read('stable'), 'v2')
+
+    def test_only_committed_transactions_replay_once(self) -> None:
+        filesystem = FileSystemModel()
+        journal = Journal()
+        committed = journal.begin()
+        journal.append(committed, {'op': 'create', 'name': 'a', 'data': 'x'})
+        journal.append(committed, {'op': 'fsync-file', 'name': 'a'})
+        journal.append(committed, {'op': 'fsync-directory'})
+        journal.commit(committed)
+        uncommitted = journal.begin()
+        journal.append(uncommitted, {'op': 'rename', 'old': 'a', 'new': 'b'})
+        applied: set[int] = set()
+        first = journal.recover(filesystem.apply_operation, already_applied=applied)
+        second = journal.recover(filesystem.apply_operation, already_applied=applied)
+        self.assertEqual((first, second), ([committed], []))
+        self.assertIn('a', filesystem.directory)
+        self.assertNotIn('b', filesystem.directory)
+
+    def test_journal_rejects_commit_without_begin(self) -> None:
+        with self.assertRaises(JournalError):
+            Journal.from_snapshot([{'txid': 1, 'kind': 'commit', 'payload': {}}])
 if __name__ == '__main__':
     unittest.main()
