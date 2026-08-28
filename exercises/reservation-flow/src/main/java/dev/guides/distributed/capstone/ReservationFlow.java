@@ -511,4 +511,52 @@ public final class ReservationFlow {
             return allocationEffects;
         }
     }
+
+    // [Implementation 5] 브로커 전달 기록
+    // Broker는 전달 시도만 보관하며 전달됐다는 사실을 업무 완료로 해석하지 않습니다.
+    public static final class Broker {
+        private boolean available = true;
+        private final List<Event> messages = new ArrayList<>();
+
+        public void setAvailable(boolean available) {
+            this.available = available;
+        }
+
+        public void send(Event event) {
+            if (!available) {
+                throw new BrokerUnavailable();
+            }
+            messages.add(event);
+        }
+
+        public List<Event> messages() {
+            return List.copyOf(messages);
+        }
+    }
+
+    // [Implementation 6] Outbox 발행 순서
+    // Publisher는 Broker 전송과 ReservationService의 발행 완료 표시 순서를 고정합니다.
+    public static final class Publisher {
+        private final ReservationService reservations;
+        private final Broker broker;
+
+        public Publisher(ReservationService reservations, Broker broker) {
+            this.reservations = reservations;
+            this.broker = broker;
+        }
+
+        // [Implementation 6-1] 전송 성공 후 발행 완료 표시
+        // Broker.send가 성공한 뒤에만 Outbox 행을 published로 바꿉니다.
+        public void publishPending(boolean crashAfterFirstSend) {
+            boolean first = true;
+            for (Event event : reservations.pendingOutbox()) {
+                broker.send(event);
+                if (first && crashAfterFirstSend) {
+                    throw new SimulatedCrash();
+                }
+                reservations.markPublished(event.eventId());
+                first = false;
+            }
+        }
+    }
 }

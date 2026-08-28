@@ -13,6 +13,16 @@ var request = service.pendingOutbox().get(0);
 var outcome = inventory.handle(request);
 Checks.equals(outcome, inventory.handle(request), "Inventory deduplication");
 Checks.equals(4, inventory.available(), "One allocation");
+var broker = new ReservationFlow.Broker();
+var publisher = new ReservationFlow.Publisher(service, broker);
+broker.setAvailable(false);
+Checks.throwsType(ReservationFlow.BrokerUnavailable.class, () -> publisher.publishPending(false), "Broker failure retains work");
+Checks.equals(1, service.pendingOutboxCount(), "Pending retained");
+broker.setAvailable(true);
+Checks.throwsType(ReservationFlow.SimulatedCrash.class, () -> publisher.publishPending(true), "Crash after send");
+publisher.publishPending(false);
+Checks.equals(2, broker.messages().size(), "At least once redelivery");
+Checks.equals(0, service.pendingOutboxCount(), "Publication completion");
 System.out.println("stage tests passed");
 }
 
