@@ -2,6 +2,7 @@
 from __future__ import annotations
 import unittest
 from kernel_model.deadlock import DeadlockInputError, detect_deadlocked, find_wait_cycle, safe_sequence
+from kernel_model.device_io import DeviceQueue, DeviceStateError, RequestState
 from kernel_model.filesystem import FileSystemModel
 from kernel_model.journal import Journal, JournalError
 from kernel_model.lifecycle import KernelState, TaskState
@@ -178,5 +179,33 @@ class StorageTests(unittest.TestCase):
     def test_journal_rejects_commit_without_begin(self) -> None:
         with self.assertRaises(JournalError):
             Journal.from_snapshot([{'txid': 1, 'kind': 'commit', 'payload': {}}])
+
+class DeviceTests(unittest.TestCase):
+
+    def test_dma_pin_and_completion_lifetime(self) -> None:
+        device = DeviceQueue(queue_depth=2)
+        request_id = device.submit('process-A', (10, 11), 8192)
+        request = device.start_next()
+        self.assertEqual(request.request_id if request else None, request_id)
+        self.assertTrue(device.requests[request_id].pinned)
+        device.interrupt_complete(request_id, bytes_transferred=4096)
+        self.assertFalse(device.requests[request_id].pinned)
+        result = device.reap('process-A')
+        self.assertEqual(result.state if result else None, RequestState.REAPED)
+        with self.assertRaises(DeviceStateError):
+            device.interrupt_complete(request_id, bytes_transferred=4096)
+
+    def test_queued_cancel_is_reported_to_owner(self) -> None:
+        device = DeviceQueue()
+        request_id = device.submit('p', (1,), 512)
+        self.assertEqual(device.cancel('p', request_id), RequestState.CANCELLED)
+        result = device.reap('p')
+        self.assertIsNotNone(result)
+        self.assertEqual(result.state, RequestState.REAPED)
+
+    def test_snapshot_rejects_active_requests_beyond_depth(self) -> None:
+        snapshot = {'queue_depth': 1, 'pending': [1, 2], 'in_flight': [], 'completions': {}, 'requests': {str(request_id): {'owner': owner, 'buffer_pages': [request_id - 1], 'length': 1, 'state': 'queued', 'pinned': False} for request_id, owner in ((1, 'a'), (2, 'b'))}}
+        with self.assertRaisesRegex(DeviceStateError, 'exceeds queue depth'):
+            DeviceQueue.validate_snapshot(snapshot)
 if __name__ == '__main__':
     unittest.main()
