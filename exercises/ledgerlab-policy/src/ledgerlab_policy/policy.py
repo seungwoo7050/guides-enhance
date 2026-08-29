@@ -197,3 +197,107 @@ def authorize_report(
     if report.get("status") != "completed":
         return _deny(request, REPORT_NOT_COMPLETED)
     return _result(request, "allow", REPORT_SCOPE_SATISFIED)
+
+
+# [Implementation 4] Worker credential lifecycle
+
+def _credential_denial(
+    state: Mapping[str, Any],
+    request: Mapping[str, Any],
+) -> tuple[Mapping[str, Any] | None, str | None]:
+    credentials = _mapping(state.get("credentials"))
+    credential = (
+        _mapping(credentials.get(request.get("credential_id")))
+        if credentials
+        else None
+    )
+    if credential is None:
+        return None, CREDENTIAL_NOT_FOUND
+
+    required = (
+        "service_id",
+        "tenant_id",
+        "job_id",
+        "object_prefix",
+        "expires_at",
+    )
+    if any(not _non_empty_string(credential.get(field)) for field in required):
+        return credential, CREDENTIAL_SCOPE_INCOMPLETE
+    if not isinstance(credential.get("revoked"), bool):
+        return credential, CREDENTIAL_SCOPE_INCOMPLETE
+    prefix_segments = _path_segments(credential.get("object_prefix"))
+    expected_scope = (
+        "synthetic",
+        credential["tenant_id"],
+        credential["job_id"],
+    )
+    # Credential 내부의 tenant·job과 prefix가 서로 다르면 어떤 범위를 허용해야 할지
+    # 결정할 수 없으므로 잘못된 credential로 처리합니다.
+    if prefix_segments is None or prefix_segments[:3] != expected_scope:
+        return credential, CREDENTIAL_SCOPE_INCOMPLETE
+    if credential.get("revoked") is True:
+        return credential, CREDENTIAL_REVOKED
+    if request.get("actor_id") != credential.get("service_id"):
+        return credential, CREDENTIAL_SERVICE_MISMATCH
+
+    now = _parse_time(state.get("now"))
+    expires_at = _parse_time(credential.get("expires_at"))
+    if now is None or expires_at is None:
+        return credential, TIME_CONTEXT_INVALID
+    if expires_at <= now:
+        return credential, CREDENTIAL_EXPIRED
+    return credential, None
+
+
+def _path_segments(value: object) -> tuple[str, ...] | None:
+    if not _non_empty_string(value) or value.startswith("/") or "\\" in value:
+        return None
+    segments = value.split("/")
+    if segments[-1] == "":
+        segments = segments[:-1]
+    if not segments or any(segment in {"", ".", ".."} for segment in segments):
+        return None
+    return tuple(segments)
+
+
+def _resource_within_prefix(resource: object, prefix: object) -> bool:
+    # 문자열 prefix 비교는 job-81x를 job-81의 하위 경로로 오인할 수 있습니다.
+    resource_segments = _path_segments(resource)
+    prefix_segments = _path_segments(prefix)
+    if resource_segments is None or prefix_segments is None:
+        return False
+    return (
+        len(resource_segments) > len(prefix_segments)
+        and resource_segments[: len(prefix_segments)] == prefix_segments
+    )
+
+
+# [Implementation 5] Job-scoped object authorization
+
+def authorize_object(
+    state: Mapping[str, Any] | object,
+    request: Mapping[str, Any] | object,
+) -> AuthorizationResult:
+    denial = _common_denial(state, request, "object.read")
+    if denial is not None:
+        return _deny(request, denial)
+
+    if not isinstance(state, Mapping) or not isinstance(request, Mapping):
+        return _deny(request, POLICY_UNAVAILABLE)
+
+    credential, denial = _credential_denial(state, request)
+    if denial is not None or credential is None:
+        return _deny(request, denial or CREDENTIAL_NOT_FOUND)
+
+    tenant_id = request.get("tenant_id")
+    job_id = request.get("job_id")
+    if not _non_empty_string(tenant_id) or tenant_id != credential.get("tenant_id"):
+        return _deny(request, TENANT_SCOPE_MISMATCH)
+    if not _non_empty_string(job_id) or job_id != credential.get("job_id"):
+        return _deny(request, JOB_SCOPE_MISMATCH)
+    if not _resource_within_prefix(
+        request.get("resource_id"),
+        credential.get("object_prefix"),
+    ):
+        return _deny(request, OBJECT_PREFIX_MISMATCH)
+    return _result(request, "allow", CREDENTIAL_SCOPE_SATISFIED)
