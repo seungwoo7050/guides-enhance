@@ -1,0 +1,91 @@
+{
+  "policy": {
+    "stale_after": 10,
+    "max_queue_size": 3,
+    "soft_headroom": {
+      "rooms": 1,
+      "players": 2,
+      "tick_cost": 10,
+      "outbound_bytes": 100,
+      "memory": 100
+    }
+  },
+  "servers": [
+    {
+      "server_id": "kr-1",
+      "release_id": "2026.08.1",
+      "protocol_versions": ["v1"],
+      "region": "kr",
+      "state": "ACTIVE",
+      "room_count": 2,
+      "player_count": 8,
+      "tick_cost_used": 25,
+      "outbound_bytes_used": 200,
+      "memory_used": 500,
+      "last_heartbeat": 0,
+      "limits": {
+        "max_rooms": 10,
+        "max_players": 40,
+        "max_tick_cost": 100,
+        "max_outbound_bytes": 4000,
+        "max_memory": 8000
+      }
+    },
+    {
+      "server_id": "jp-1",
+      "release_id": "2026.08.1",
+      "protocol_versions": ["v1", "v2"],
+      "region": "jp",
+      "state": "ACTIVE",
+      "room_count": 1,
+      "player_count": 4,
+      "tick_cost_used": 15,
+      "outbound_bytes_used": 100,
+      "memory_used": 300,
+      "last_heartbeat": 0,
+      "limits": {
+        "max_rooms": 10,
+        "max_players": 40,
+        "max_tick_cost": 100,
+        "max_outbound_bytes": 4000,
+        "max_memory": 8000
+      }
+    }
+  ],
+  "events": [
+    {
+      "event_id": "e1",
+      "kind": "REQUEST",
+      "logical_time": 1,
+      "request": {
+        "request_id": "match-request-1",
+        "required_protocol_version": "v1",
+        "region_preferences": ["kr", "jp"],
+        "expected_players": 6,
+        "estimated_tick_cost": 12,
+        "estimated_bandwidth": 300,
+        "estimated_memory": 600,
+        "created_at": 1,
+        "deadline": 8
+      }
+    },
+    {"event_id": "e2", "kind": "BEGIN_DRAIN", "logical_time": 2, "server_id": "kr-1"},
+    {
+      "event_id": "e3",
+      "kind": "REQUEST",
+      "logical_time": 3,
+      "request": {
+        "request_id": "match-request-2",
+        "required_protocol_version": "v1",
+        "region_preferences": ["kr", "jp"],
+        "expected_players": 4,
+        "estimated_tick_cost": 10,
+        "estimated_bandwidth": 200,
+        "estimated_memory": 400,
+        "created_at": 3,
+        "deadline": 10
+      }
+    },
+    {"event_id": "e4", "kind": "COMPLETE_MATCH", "logical_time": 5, "request_id": "match-request-1"}
+  ]
+}

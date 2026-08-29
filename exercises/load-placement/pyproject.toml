@@ -6,10 +6,14 @@ build-backend = "setuptools.build_meta"
 name = "load-placement"
 version = "1.0.0"
 description = "Deterministic game-match admission and placement simulator"
+readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "seungwoo7050"}]
 dependencies = []
+
+[project.scripts]
+load-placement = "load_placement.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
