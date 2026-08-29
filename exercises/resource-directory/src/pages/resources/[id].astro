@@ -1,6 +1,7 @@
 ---
 import { render } from "astro:content";
 import ResourceCard from "../../components/ResourceCard.astro";
+import { FavoriteButton } from "../../components/FavoriteButton";
 import SiteLayout from "../../layouts/SiteLayout.astro";
 import {
   getPublishedResources,
@@ -43,6 +44,13 @@ const canonicalPath = `/resources/${resource.entry.id}/`;
       <h1>{resource.summary.title}</h1>
       <p class="lead">{resource.summary.summary}</p>
       <div class="detail-actions">
+        <!-- [Implementation 8-1]
+             The immediately visible control hydrates with client:load; the article remains static HTML. -->
+        <FavoriteButton
+          client:load
+          resourceId={resource.entry.id}
+          resourceTitle={resource.summary.title}
+        />
         {resource.entry.data.sourceUrl && (
           <a href={resource.entry.data.sourceUrl} rel="noreferrer">원문 확인</a>
         )}
