@@ -539,6 +539,100 @@ class LifecycleEngine:
         destroyed.append(f"room:{room_id}")
         return self._decision(raw, ACCEPTED, "ROOM_CLOSED")
 
+    # [Implementation 6]
+    # Drain admission checks
+    # drain을 시작하면 기존 경기는 유지하되 새 방, 참가, 경기 시작은 받지 않습니다.
+    def _on_begin_drain(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        if self.server_state == "DRAINING":
+            return self._decision(raw, IGNORED, "ALREADY_DRAINING")
+        self.server_state = "DRAINING"
+        return self._decision(raw, ACCEPTED, "DRAIN_STARTED")
+
+    # [Implementation 7]
+    # Shutdown cleanup
+    # 종료 뒤 연결, 세션, 플레이어, 방, 경기 참조가 남지 않게 모두 제거합니다.
+    def _on_shutdown(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        if self.server_state == "SHUTDOWN":
+            return self._decision(raw, IGNORED, "ALREADY_SHUTDOWN")
+        destroyed.extend(f"match:{item}" for item in sorted(self.matches))
+        destroyed.extend(f"room:{item}" for item in sorted(self.rooms))
+        destroyed.extend(f"player:{item}" for item in sorted(self.players))
+        destroyed.extend(f"session:{item}" for item in sorted(self.sessions))
+        destroyed.extend(f"connection:{item}" for item in sorted(self.connections))
+        self.matches.clear()
+        self.rooms.clear()
+        self.players.clear()
+        self.sessions.clear()
+        self.connections.clear()
+        self.server_state = "SHUTDOWN"
+        return self._decision(raw, ACCEPTED, "SHUTDOWN_COMPLETE")
+
+    def _on_advance_time(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        return self._decision(raw, ACCEPTED, "TIME_ADVANCED")
+
+    def _assert_invariants(self) -> None:
+        for connection in self.connections.values():
+            if connection.state == "AUTHENTICATED":
+                assert connection.session_id in self.sessions
+        for session in self.sessions.values():
+            assert session.player_id in self.players
+            if session.state == "ACTIVE":
+                assert session.connection_id in self.connections
+                assert self.connections[session.connection_id].session_id == session.session_id
+            else:
+                assert session.connection_id is None
+        for room in self.rooms.values():
+            assert room.owner_player_id in room.player_ids
+            for player_id in room.player_ids:
+                assert self.players[player_id].room_id == room.room_id
+            if room.match_id is not None:
+                assert room.match_id in self.matches
+        for match in self.matches.values():
+            assert match.room_id in self.rooms
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "logical_time": self.logical_time,
+            "server_state": self.server_state,
+            "connections": [
+                asdict(self.connections[item]) for item in sorted(self.connections)
+            ],
+            "sessions": [asdict(self.sessions[item]) for item in sorted(self.sessions)],
+            "players": [asdict(self.players[item]) for item in sorted(self.players)],
+            "rooms": [
+                {
+                    **asdict(self.rooms[item]),
+                    "player_ids": sorted(self.rooms[item].player_ids),
+                }
+                for item in sorted(self.rooms)
+            ],
+            "matches": [
+                {
+                    **asdict(self.matches[item]),
+                    "participant_ids": sorted(self.matches[item].participant_ids),
+                    "forfeited_player_ids": sorted(
+                        self.matches[item].forfeited_player_ids
+                    ),
+                }
+                for item in sorted(self.matches)
+            ],
+        }
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
