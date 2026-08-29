@@ -375,6 +375,154 @@ class PlacementEngine:
         self.queue = remaining
         return updates
 
+    # [Implementation 7]
+    # Drain tracking and capacity release
+    # 진행 중 경기의 예약을 반환한 뒤 남은 예약이 없을 때 drain 완료를 기록합니다.
+    def _begin_drain(self, server_id: str) -> tuple[str, str]:
+        server = self.servers.get(server_id)
+        if server is None:
+            return "REJECTED", "SERVER_NOT_FOUND"
+        if server.state == "DRAINING":
+            return "IGNORED", "ALREADY_DRAINING"
+        if server.state == "UNAVAILABLE":
+            return "REJECTED", "SERVER_UNAVAILABLE"
+        server.state = "DRAINING"
+        return "ACCEPTED", "DRAIN_STARTED"
+
+    def _complete_match(self, request_id: str) -> tuple[str, str, str | None]:
+        reservation = self.reservations.pop(request_id, None)
+        if reservation is None:
+            return "REJECTED", "RESERVATION_NOT_FOUND", None
+        server = self.servers[reservation.server_id]
+        server.room_count -= 1
+        server.player_count -= reservation.players
+        server.tick_cost_used -= reservation.tick_cost
+        server.outbound_bytes_used -= reservation.outbound_bytes
+        server.memory_used -= reservation.memory
+        self.decisions[request_id] = RequestDecision(
+            request_id,
+            "COMPLETED",
+            "MATCH_COMPLETED",
+            server_id=server.server_id,
+        )
+        draining_reservations = any(
+            item.server_id == server.server_id for item in self.reservations.values()
+        )
+        drain_result = (
+            "DRAIN_COMPLETE"
+            if server.state == "DRAINING" and not draining_reservations
+            else None
+        )
+        return "ACCEPTED", "MATCH_COMPLETED", drain_result
+
+    def apply_event(self, raw: dict[str, Any]) -> None:
+        event_id = str(raw.get("event_id", ""))
+        kind = str(raw.get("kind", ""))
+        now = raw.get("logical_time")
+        if not event_id or not kind or not self._is_int(now) or now < self.logical_time:
+            raise ValueError("event_id, kind, and non-decreasing logical_time are required")
+        self.logical_time = now
+        queue_updates: list[dict[str, object]] = []
+        details: dict[str, object] = {}
+        if event_id in self.processed_event_ids:
+            status, reason = "IGNORED", "DUPLICATE_EVENT"
+        else:
+            self.processed_event_ids.add(event_id)
+            if kind == "REQUEST":
+                try:
+                    request = self._parse_request(raw.get("request"))
+                except ValueError:
+                    status, reason = "REJECTED", "INVALID_REQUEST"
+                else:
+                    if request.created_at > now:
+                        decision = RequestDecision(
+                            request.request_id,
+                            "REJECTED",
+                            "REQUEST_NOT_CREATED",
+                        )
+                        status, reason = decision.status, decision.reason_code
+                        details["request_decision"] = asdict(decision)
+                    else:
+                        existing_request = self.requests.get(request.request_id)
+                        if existing_request is not None and existing_request != request:
+                            status, reason = "REJECTED", "REQUEST_ID_CONFLICT"
+                        else:
+                            self.requests.setdefault(request.request_id, request)
+                            decision = self._admit(request, now, allow_queue=True)
+                            status, reason = decision.status, decision.reason_code
+                            details["request_decision"] = asdict(decision)
+            elif kind == "ADVANCE_TIME":
+                status, reason = "ACCEPTED", "TIME_ADVANCED"
+                queue_updates = self._process_queue(now)
+            elif kind == "BEGIN_DRAIN":
+                status, reason = self._begin_drain(str(raw.get("server_id", "")))
+            elif kind == "COMPLETE_MATCH":
+                status, reason, drain_result = self._complete_match(
+                    str(raw.get("request_id", ""))
+                )
+                if drain_result is not None:
+                    details["drain_result"] = drain_result
+                queue_updates = self._process_queue(now)
+            elif kind == "HEARTBEAT":
+                server = self.servers.get(str(raw.get("server_id", "")))
+                if server is None:
+                    status, reason = "REJECTED", "SERVER_NOT_FOUND"
+                else:
+                    state = raw.get("state")
+                    if state is not None and state not in (
+                        "ACTIVE",
+                        "DRAINING",
+                        "UNAVAILABLE",
+                    ):
+                        status, reason = "REJECTED", "INVALID_SERVER_STATE"
+                    else:
+                        server.last_heartbeat = now
+                        if state is not None:
+                            server.state = state
+                        status, reason = "ACCEPTED", "HEARTBEAT_UPDATED"
+                        queue_updates = self._process_queue(now)
+            else:
+                status, reason = "REJECTED", "UNKNOWN_EVENT"
+        self.trace.append(
+            {
+                "event_id": event_id,
+                "kind": kind,
+                "logical_time": now,
+                "status": status,
+                "reason_code": reason,
+                "queue_updates": queue_updates,
+                **details,
+                "queue": list(self.queue),
+                "servers": self._server_list(),
+            }
+        )
+
+    def _server_list(self) -> list[dict[str, object]]:
+        result: list[dict[str, object]] = []
+        for server_id in sorted(self.servers):
+            server = self.servers[server_id]
+            item = asdict(server)
+            item["protocol_versions"] = list(server.protocol_versions)
+            item["drain_complete"] = server.state == "DRAINING" and not any(
+                reservation.server_id == server_id
+                for reservation in self.reservations.values()
+            )
+            result.append(item)
+        return result
+
+    def result(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "trace": self.trace,
+            "decisions": [asdict(self.decisions[item]) for item in sorted(self.decisions)],
+            "active_reservations": [
+                asdict(self.reservations[item]) for item in sorted(self.reservations)
+            ],
+            "queue": list(self.queue),
+            "servers": self._server_list(),
+        }
+        result["digest"] = digest_value(result)
+        return result
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
