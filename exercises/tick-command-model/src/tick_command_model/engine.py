@@ -5,6 +5,12 @@ from dataclasses import asdict
 from typing import Any, Iterable
 
 from .model import Command, Decision, PlayerState, SimulationConfig
+import hashlib
+import json
+
+def digest_result(value):
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 REASON_APPLIED = "APPLIED"
@@ -267,6 +273,141 @@ def _execute_command(
     return Decision(command.command_id, command.target_tick, "APPLIED", REASON_APPLIED)
 
 
-def run_scenario(scenario):
-    """Expose the package boundary while later lifecycle stages are unfinished."""
-    raise NotImplementedError("scenario execution is introduced in a later implementation stage")
+# [Implementation 6]
+# Bounded tick execution
+# 늦어진 tick과 명령을 무제한 처리하지 않고 남은 작업을 결과에 명시합니다.
+def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(scenario, dict):
+        raise ValueError("scenario must be an object")
+    raw_players = scenario.get("players", [])
+    raw_commands = scenario.get("commands", [])
+    if not isinstance(raw_players, list) or not isinstance(raw_commands, list):
+        raise ValueError("players and commands must be arrays")
+    config = _parse_config(scenario.get("config", {}))
+    players = _parse_players(raw_players)
+    for player in players.values():
+        if (
+            abs(player.x) > config.coordinate_limit
+            or abs(player.y) > config.coordinate_limit
+            or player.score < 0
+            or player.score > config.score_limit
+        ):
+            raise ValueError("initial player state exceeds configured limits")
+    buckets: dict[int, list[Command]] = defaultdict(list)
+    decisions: list[Decision] = []
+
+    for index, raw_command in enumerate(raw_commands):
+        command, error = _parse_command(raw_command, index)
+        if error is not None:
+            decisions.append(error)
+            continue
+        assert command is not None
+        if command.target_tick <= config.start_tick:
+            decisions.append(
+                Decision(command.command_id, command.target_tick, "REJECTED", REASON_STALE_TICK)
+            )
+            continue
+        if command.target_tick > config.start_tick + config.max_future_tick_distance:
+            decisions.append(
+                Decision(
+                    command.command_id,
+                    command.target_tick,
+                    "REJECTED",
+                    REASON_FUTURE_TICK_LIMIT,
+                )
+            )
+            continue
+        buckets[command.target_tick].append(command)
+
+    required_ticks = config.advance_to_tick - config.start_tick
+
+    # [Implementation 6-1]
+    # Catch-up limit and pending work
+    # 따라잡지 못한 tick의 명령은 버리지 않고 pending 목록으로 반환합니다.
+    executed_tick_count = min(required_ticks, config.max_catch_up_ticks)
+    final_tick = config.start_tick + executed_tick_count
+    catch_up_limited = required_ticks > config.max_catch_up_ticks
+    tick_limit_exceeded = False
+    tick_trace: list[dict[str, Any]] = []
+
+    for tick in range(config.start_tick + 1, final_tick + 1):
+        ordered = sorted(buckets.pop(tick, []), key=_command_order)
+
+        # [Implementation 6-2]
+        # Per-tick inspection limit
+        # 거절된 명령도 검사 비용을 쓰므로 적용 성공 수가 아니라 검사 수를 제한합니다.
+        processable = ordered[: config.max_commands_per_tick]
+        rejected_by_budget = ordered[config.max_commands_per_tick :]
+        if rejected_by_budget:
+            tick_limit_exceeded = True
+        tick_decisions = [_execute_command(command, players, config) for command in processable]
+        tick_decisions.extend(
+            Decision(
+                command.command_id,
+                command.target_tick,
+                "REJECTED",
+                REASON_TICK_COMMAND_LIMIT,
+            )
+            for command in rejected_by_budget
+        )
+        decisions.extend(tick_decisions)
+        tick_trace.append(
+            {
+                "tick": tick,
+                "applied_command_ids": [
+                    decision.command_id
+                    for decision in tick_decisions
+                    if decision.status == "APPLIED"
+                ],
+                "rejected": [
+                    {
+                        "command_id": decision.command_id,
+                        "reason_code": decision.reason_code,
+                    }
+                    for decision in tick_decisions
+                    if decision.status == "REJECTED"
+                ],
+            }
+        )
+
+    pending_commands = [
+        {
+            "command_id": command.command_id,
+            "target_tick": command.target_tick,
+        }
+        for tick in sorted(buckets)
+        for command in sorted(buckets[tick], key=_command_order)
+    ]
+    overload_reasons = []
+    if catch_up_limited:
+        overload_reasons.append("CATCH_UP_LIMIT")
+    if tick_limit_exceeded:
+        overload_reasons.append("TICK_COMMAND_LIMIT")
+    result: dict[str, Any] = {
+        "match_id": config.match_id,
+        "tick_rate_hz": config.tick_rate_hz,
+        "start_tick": config.start_tick,
+        "requested_final_tick": config.advance_to_tick,
+        "final_tick": final_tick,
+        "overloaded": bool(overload_reasons),
+        "overload_reasons": overload_reasons,
+        "tick_trace": tick_trace,
+        "decisions": [
+            decision.to_dict()
+            for decision in sorted(
+                decisions,
+                key=lambda item: (
+                    -1 if item.target_tick is None else item.target_tick,
+                    item.command_id,
+                    item.reason_code,
+                ),
+            )
+        ],
+        "players": [players[player_id].to_dict() for player_id in sorted(players)],
+        "last_applied_sequence": {
+            player_id: players[player_id].last_sequence for player_id in sorted(players)
+        },
+        "pending_commands": pending_commands,
+    }
+    result["digest"] = digest_result(result)
+    return result
