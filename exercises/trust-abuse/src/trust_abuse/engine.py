@@ -519,6 +519,174 @@ class TrustEngine:
             "payload_digest": digest_value(command["safe_payload"]),
         }
 
+    # [Implementation 8]
+    # Redacted audit records
+    # 원문 payload와 인증 token 대신 크기, digest, 판정 사유만 기록합니다.
+    def _record_audit(
+        self,
+        command: dict[str, Any],
+        decision: CommandDecision,
+    ) -> None:
+        self.audit_events.append(self._redacted_audit(command, decision))
+        if decision.status == "DENY":
+            key = (
+                command.get("authenticated_actor_id", command["actor_id"]),
+                command["match_id"],
+                decision.reason_code,
+            )
+            self.denial_groups.setdefault(key, set()).add(command["command_id"])
+
+    def _deny(
+        self,
+        command: dict[str, Any],
+        reason: str,
+        fingerprint: str,
+        *,
+        cache: bool = True,
+    ) -> CommandDecision:
+        decision = CommandDecision(command["command_id"], "DENY", reason)
+        if cache:
+            self.command_cache[command["command_id"]] = (fingerprint, decision)
+        self._record_audit(command, decision)
+        return decision
+
+    def handle_command(self, raw: Any, logical_time: int) -> CommandDecision:
+        command, error = self._normalize_command(raw)
+        if command is None:
+            command_id = (
+                str(raw.get("command_id", "invalid-command"))
+                if isinstance(raw, dict)
+                else "invalid-command"
+            )
+            return CommandDecision(command_id, "DENY", error or "INVALID_COMMAND")
+        fingerprint = self._command_fingerprint(command)
+        known_session = self.sessions.get(command["session_id"])
+        if known_session is not None:
+            command["authenticated_actor_id"] = known_session.actor_id
+
+        # [Implementation 9]
+        # Duplicate command decision reuse
+        # 같은 command ID는 최초 판정을 재사용하고 충돌 요청이 audit 수를 계속 늘리지 못하게 합니다.
+        cached = self.command_cache.get(command["command_id"])
+        if cached is not None:
+            cached_fingerprint, cached_decision = cached
+            if cached_fingerprint == fingerprint:
+                return CommandDecision(
+                    command["command_id"],
+                    "IGNORED",
+                    "DUPLICATE_COMMAND",
+                    cached_decision.applied_changes,
+                )
+            conflict = (command["command_id"], fingerprint)
+            if conflict in self.command_conflicts:
+                return CommandDecision(
+                    command["command_id"],
+                    "IGNORED",
+                    "DUPLICATE_COMMAND_ID_CONFLICT",
+                )
+            self.command_conflicts.add(conflict)
+            return self._deny(
+                command,
+                "COMMAND_ID_CONFLICT",
+                fingerprint,
+                cache=False,
+            )
+
+        session, reason = self._validate_session(command)
+        if reason is not None or session is None:
+            return self._deny(command, reason or "SESSION_NOT_ACTIVE", fingerprint)
+        player, reason = self._validate_membership(command)
+        if reason is not None or player is None:
+            return self._deny(command, reason or "PLAYER_NOT_FOUND", fingerprint)
+
+        allowed, _bucket = self._consume_rate_limit(
+            session,
+            player,
+            command["kind"],
+            logical_time,
+        )
+        if not allowed:
+            return self._deny(command, "RATE_LIMITED", fingerprint)
+
+        if error is not None:
+            return self._deny(command, error, fingerprint)
+
+        if command["sequence"] <= player.last_sequence:
+            return self._deny(command, "STALE_SEQUENCE", fingerprint)
+        if command["sequence"] != player.last_sequence + 1:
+            return self._deny(command, "SEQUENCE_GAP", fingerprint)
+
+        change, reason = self._validate_and_prepare_change(player, command)
+        if reason is not None or change is None:
+            return self._deny(command, reason or "INVALID_COMMAND", fingerprint)
+        applied = self._commit_change(player, command, change)
+        decision = CommandDecision(command["command_id"], "ALLOW", "ALLOWED", applied)
+        self.command_cache[command["command_id"]] = (fingerprint, decision)
+        self._record_audit(command, decision)
+        return decision
+
+    def reconnect(self, raw: dict[str, Any]) -> tuple[str, str]:
+        session_id = str(raw.get("session_id", ""))
+        connection_id = str(raw.get("new_connection_id", ""))
+        epoch = raw.get("session_epoch")
+        session = self.sessions.get(session_id)
+        if session is None:
+            return "REJECTED", "SESSION_NOT_FOUND"
+        if (
+            not connection_id
+            or not self._is_int(epoch)
+            or epoch != session.epoch + 1
+        ):
+            return "REJECTED", "SESSION_EPOCH_MISMATCH"
+        if any(
+            other.session_id != session_id
+            and other.active
+            and other.connection_id == connection_id
+            for other in self.sessions.values()
+        ):
+            return "REJECTED", "CONNECTION_ALREADY_BOUND"
+        session.connection_id = connection_id
+        session.epoch = epoch
+        session.active = True
+        return "ACCEPTED", "RECONNECTED"
+
+    def apply_event(self, raw: dict[str, Any]) -> None:
+        event_id = str(raw.get("event_id", ""))
+        kind = str(raw.get("kind", ""))
+        logical_time = raw.get("logical_time")
+        if (
+            not event_id
+            or not kind
+            or not self._is_int(logical_time)
+            or logical_time < self.logical_time
+        ):
+            raise ValueError("event_id, kind, and non-decreasing logical_time are required")
+        self.logical_time = logical_time
+        details: dict[str, Any] = {}
+        if event_id in self.processed_event_ids:
+            status, reason = "IGNORED", "DUPLICATE_EVENT"
+        else:
+            self.processed_event_ids.add(event_id)
+            if kind == "COMMAND":
+                decision = self.handle_command(raw.get("command"), logical_time)
+                status, reason = decision.status, decision.reason_code
+                details["decision"] = asdict(decision)
+            elif kind == "RECONNECT":
+                status, reason = self.reconnect(raw)
+            else:
+                status, reason = "REJECTED", "UNKNOWN_EVENT"
+        self.trace.append(
+            {
+                "event_id": event_id,
+                "kind": kind,
+                "logical_time": logical_time,
+                "status": status,
+                "reason_code": reason,
+                **details,
+                "state_digest": digest_value(self._state_dict()),
+            }
+        )
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
