@@ -10,9 +10,9 @@ class ImplementationBoundaryTest(unittest.TestCase):
 
     def test_current_engine_stage_has_no_future_markers(self) -> None:
         source = (Path(__file__).parents[1] / "src/replication_reconnect/engine.py").read_text()
-        self.assertIn('[Implementation 5]', source)
-        self.assertIn('[Implementation 6]', source)
-        self.assertNotIn('[Implementation 7]', source)
+        self.assertIn('[Implementation 7]', source)
+        self.assertIn('[Implementation 7-1]', source)
+
 
 
 if __name__ == "__main__":

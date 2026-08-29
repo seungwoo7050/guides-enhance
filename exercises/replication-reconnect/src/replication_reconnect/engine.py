@@ -478,6 +478,148 @@ class ReplicationEngine:
     def _queue_size(self, messages: list[Message]) -> int:
         return sum(canonical_size(self._message_dict(message)) for message in messages)
 
+    # [Implementation 7]
+    # Per-client outbound queue limit
+    # 한 클라이언트의 느린 소비가 다른 클라이언트나 서버 메모리를 막지 않게 합니다.
+    def enqueue(self, client: ClientReplica, message: Message) -> tuple[str, str]:
+        if not client.connected:
+            return "REJECTED", "CLIENT_DISCONNECTED"
+        identity_reason = self._identity_reason(message)
+        if identity_reason is not None:
+            return "REJECTED", identity_reason
+        if message.version > self.server_version:
+            return "REJECTED", "SERVER_VERSION_EXCEEDED"
+        candidate = [*client.outbound_messages, message]
+        candidate_size = self._queue_size(candidate)
+        if candidate_size <= self.config.max_send_queue_bytes:
+            client.outbound_messages = candidate
+            client.outbound_bytes = candidate_size
+            client.max_outbound_bytes = max(client.max_outbound_bytes, candidate_size)
+            return "ENQUEUED", "OUTBOUND_ENQUEUED"
+
+        # [Implementation 7-1]
+        # Snapshot compaction or client disconnect
+        # 최신 snapshot 하나도 상한 안에 넣지 못하면 연결을 종료합니다.
+        snapshot = self._snapshot_message(f"queue-snapshot-{client.client_id}")
+        snapshot_size = canonical_size(self._message_dict(snapshot))
+        if (
+            snapshot_size <= self.config.max_send_queue_bytes
+            and snapshot_size <= self.config.max_snapshot_bytes
+        ):
+            client.outbound_messages = [snapshot]
+            client.outbound_bytes = snapshot_size
+            client.max_outbound_bytes = max(client.max_outbound_bytes, snapshot_size)
+            return "COMPACTED", "COMPACTED_TO_SNAPSHOT"
+        client.outbound_messages.clear()
+        client.outbound_bytes = 0
+        client.connected = False
+        return "DISCONNECTED", "SLOW_CLIENT_DISCONNECTED"
+
+    def flush(self, client: ClientReplica, max_bytes: Any) -> tuple[str, str, list[str]]:
+        if not client.connected:
+            return "REJECTED", "CLIENT_DISCONNECTED", []
+        if not self._is_int(max_bytes) or max_bytes < 0:
+            return "REJECTED", "INVALID_FLUSH_LIMIT", []
+        sent: list[str] = []
+        used = 0
+        remaining: list[Message] = []
+        for index, message in enumerate(client.outbound_messages):
+            size = canonical_size(self._message_dict(message))
+            if used + size > max_bytes:
+                remaining.extend(client.outbound_messages[index:])
+                break
+            used += size
+            sent.append(message.message_id)
+        client.outbound_messages = remaining
+        client.outbound_bytes = self._queue_size(remaining)
+        return "ACCEPTED", "OUTBOUND_FLUSHED", sent
+
+    def apply_event(self, raw: dict[str, Any]) -> None:
+        event_id = str(raw.get("event_id", ""))
+        kind = str(raw.get("kind", ""))
+        client_id = str(raw.get("client_id", ""))
+        if not event_id or not kind or not client_id:
+            raise ValueError("event_id, kind, and client_id are required")
+        client = self.clients.get(client_id)
+        if client is None:
+            raise ValueError(f"unknown client_id: {client_id}")
+        replayed: list[str] = []
+        details: dict[str, Any] = {}
+        if event_id in self.processed_event_ids:
+            status, reason = "IGNORED", "DUPLICATE_EVENT"
+        else:
+            self.processed_event_ids.add(event_id)
+            if kind == "DELIVER":
+                try:
+                    message = self._parse_message(raw.get("message"))
+                except ValueError:
+                    status, reason = "REJECTED", "INVALID_MESSAGE"
+                else:
+                    status, reason, replayed = self.deliver(client, message)
+                    details["message_id"] = message.message_id
+            elif kind == "DISCONNECT":
+                client.connected = False
+                client.reconnect_path = None
+                status, reason = "ACCEPTED", "DISCONNECTED"
+            elif kind == "RECONNECT":
+                status, reason, replayed = self.reconnect(client, raw.get("token"))
+            elif kind == "ENQUEUE":
+                try:
+                    message = self._parse_message(raw.get("message"))
+                except ValueError:
+                    status, reason = "REJECTED", "INVALID_MESSAGE"
+                else:
+                    status, reason = self.enqueue(client, message)
+                    details["message_id"] = message.message_id
+            elif kind == "FLUSH":
+                status, reason, sent = self.flush(client, raw.get("max_bytes"))
+                details["sent_message_ids"] = sent
+            else:
+                status, reason = "REJECTED", "UNKNOWN_EVENT"
+        self.trace.append(
+            {
+                "event_id": event_id,
+                "kind": kind,
+                "client_id": client_id,
+                "status": status,
+                "reason_code": reason,
+                "replayed_message_ids": replayed,
+                **details,
+                "client": self._client_dict(client),
+            }
+        )
+
+    def _client_dict(self, client: ClientReplica) -> dict[str, Any]:
+        return {
+            "client_id": client.client_id,
+            "connected": client.connected,
+            "state_version": client.state_version,
+            "state": copy.deepcopy(client.state),
+            "state_digest": digest_value(client.state),
+            "pending_versions": sorted(message.version for message in client.pending.values()),
+            "applied_message_ids": list(client.applied_message_ids),
+            "discarded_messages": list(client.discarded_messages),
+            "resync_requested": client.resync_requested,
+            "reconnect_path": client.reconnect_path,
+            "outbound_message_ids": [
+                message.message_id for message in client.outbound_messages
+            ],
+            "outbound_bytes": client.outbound_bytes,
+            "max_outbound_bytes": client.max_outbound_bytes,
+        }
+
+    def result(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "trace": self.trace,
+            "clients": [self._client_dict(self.clients[item]) for item in sorted(self.clients)],
+            "resync_requests": sorted(
+                self.resync_requests,
+                key=lambda item: (item["client_id"], item["reason_code"]),
+            ),
+        }
+        result["digest"] = digest_value(result)
+        return result
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
