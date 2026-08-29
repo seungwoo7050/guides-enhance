@@ -1,0 +1,76 @@
+{
+  "config": {
+    "match_id": "demo-match",
+    "tick_rate_hz": 20,
+    "start_tick": 0,
+    "advance_to_tick": 3,
+    "max_commands_per_tick": 3,
+    "max_catch_up_ticks": 3,
+    "max_future_tick_distance": 4,
+    "max_move_delta": 4,
+    "coordinate_limit": 100,
+    "max_score_delta": 25,
+    "score_limit": 1000
+  },
+  "players": [
+    {
+      "player_id": "alice",
+      "session_epoch": 3,
+      "last_sequence": 0,
+      "x": 0,
+      "y": 0,
+      "score": 0
+    },
+    {
+      "player_id": "bob",
+      "session_epoch": 1,
+      "last_sequence": 0,
+      "x": 10,
+      "y": 5,
+      "score": 0
+    }
+  ],
+  "commands": [
+    {
+      "command_id": "alice-move-1",
+      "match_id": "demo-match",
+      "player_id": "alice",
+      "session_epoch": 3,
+      "sequence": 1,
+      "target_tick": 1,
+      "kind": "MOVE",
+      "payload": {
+        "dx": 2,
+        "dy": 1
+      },
+      "received_order": 2
+    },
+    {
+      "command_id": "bob-move-1",
+      "match_id": "demo-match",
+      "player_id": "bob",
+      "session_epoch": 1,
+      "sequence": 1,
+      "target_tick": 1,
+      "kind": "MOVE",
+      "payload": {
+        "dx": -1,
+        "dy": 0
+      },
+      "received_order": 1
+    },
+    {
+      "command_id": "alice-score-2",
+      "match_id": "demo-match",
+      "player_id": "alice",
+      "session_epoch": 3,
+      "sequence": 2,
+      "target_tick": 2,
+      "kind": "ADD_SCORE",
+      "payload": {
+        "delta": 10
+      },
+      "received_order": 3
+    }
+  ]
+}

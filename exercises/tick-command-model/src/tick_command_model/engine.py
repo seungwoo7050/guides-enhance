@@ -5,12 +5,7 @@ from dataclasses import asdict
 from typing import Any, Iterable
 
 from .model import Command, Decision, PlayerState, SimulationConfig
-import hashlib
-import json
-
-def digest_result(value):
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+from .serialization import digest_result
 
 
 REASON_APPLIED = "APPLIED"

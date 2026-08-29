@@ -6,10 +6,14 @@ build-backend = "setuptools.build_meta"
 name = "tick-command-model"
 version = "1.0.0"
 description = "Deterministic fixed-tick command processing simulator"
+readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "seungwoo7050"}]
 dependencies = []
+
+[project.scripts]
+tick-command-model = "tick_command_model.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
