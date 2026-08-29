@@ -384,6 +384,100 @@ class ReplicationEngine:
         client.pending[message.baseline_version] = message
         return "BUFFERED", "FUTURE_DELTA_BUFFERED", []
 
+    # [Implementation 5]
+    # Snapshot replacement and resync
+    # 새 snapshot을 적용하면 이전 baseline에 속한 보류 delta를 제거합니다.
+    def _apply_snapshot(
+        self, client: ClientReplica, message: Message
+    ) -> tuple[str, str, list[str]]:
+        assert message.state is not None
+        if canonical_size(self._message_dict(message)) > self.config.max_snapshot_bytes:
+            self._record_discard(client, message, "SNAPSHOT_SIZE_LIMIT")
+            return "REJECTED", "SNAPSHOT_SIZE_LIMIT", []
+        if message.version < client.state_version:
+            self._record_discard(client, message, "STALE_SNAPSHOT")
+            return "IGNORED", "STALE_SNAPSHOT", []
+        if message.version == client.state_version:
+            if message.state == client.state:
+                return "IGNORED", "DUPLICATE_SNAPSHOT", []
+            self._record_discard(client, message, "SNAPSHOT_VERSION_CONFLICT")
+            self._request_resync(client, "SNAPSHOT_VERSION_CONFLICT")
+            return "RESYNC_REQUIRED", "SNAPSHOT_VERSION_CONFLICT", []
+        client.state = copy.deepcopy(message.state)
+        client.state_version = message.version
+        client.applied_message_ids.append(message.message_id)
+        client.pending = {
+            baseline: pending
+            for baseline, pending in client.pending.items()
+            if pending.version > message.version and baseline >= message.version
+        }
+        client.resync_requested = False
+        return "APPLIED", "SNAPSHOT_APPLIED", self._drain_pending(client)
+
+    # [Implementation 6]
+    # Reconnect resume with snapshot fallback
+    # 보존된 delta를 복사본에 모두 적용한 뒤 성공한 경우에만 replica를 교체합니다.
+    def reconnect(self, client: ClientReplica, token: Any) -> tuple[str, str, list[str]]:
+        resume_possible = isinstance(token, dict)
+        if resume_possible:
+            resume_possible = (
+                token.get("match_id") == self.config.match_id
+                and token.get("protocol_version") == self.config.protocol_version
+                and token.get("schema_version") == self.config.schema_version
+                and token.get("baseline_version") == client.state_version
+            )
+
+        applied: list[str] = []
+        candidate_state = copy.deepcopy(client.state)
+        candidate_version = client.state_version
+        if resume_possible:
+            while candidate_version < self.server_version:
+                message = self.history.get(candidate_version)
+                if message is None:
+                    resume_possible = False
+                    break
+                try:
+                    candidate_state = self._apply_operations(
+                        candidate_state,
+                        message.operations,
+                    )
+                except ValueError:
+                    resume_possible = False
+                    break
+                candidate_version = message.version
+                applied.append(message.message_id)
+
+        if resume_possible and candidate_version == self.server_version:
+            client.connected = True
+            client.state = candidate_state
+            client.state_version = candidate_version
+            client.pending.clear()
+            client.outbound_messages.clear()
+            client.outbound_bytes = 0
+            client.resync_requested = False
+            client.applied_message_ids.extend(applied)
+            client.reconnect_path = "DELTA_RESUME"
+            return "ACCEPTED", "DELTA_RESUME", applied
+
+        snapshot = self._snapshot_message(f"reconnect-snapshot-{client.client_id}")
+        if canonical_size(self._message_dict(snapshot)) > self.config.max_snapshot_bytes:
+            client.connected = False
+            client.reconnect_path = "FAILED"
+            return "REJECTED", "SNAPSHOT_SIZE_LIMIT", []
+        client.connected = True
+        client.state = copy.deepcopy(self.server_state)
+        client.state_version = self.server_version
+        client.pending.clear()
+        client.outbound_messages.clear()
+        client.outbound_bytes = 0
+        client.resync_requested = False
+        client.applied_message_ids.append(snapshot.message_id)
+        client.reconnect_path = "FULL_SNAPSHOT"
+        return "ACCEPTED", "FULL_SNAPSHOT", []
+
+    def _queue_size(self, messages: list[Message]) -> int:
+        return sum(canonical_size(self._message_dict(message)) for message in messages)
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
