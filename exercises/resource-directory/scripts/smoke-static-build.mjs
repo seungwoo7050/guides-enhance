@@ -37,7 +37,11 @@ async function main() {
     child = spawn("npm", ["run", "preview", "--", "--host", host, "--port", String(port)], {
       cwd: projectRoot,
       detached: process.platform !== "win32",
-      env: { ...process.env, PUBLIC_BUILD_LABEL: "smoke" },
+      env: {
+        ...process.env,
+        ASTRO_PREVIEW_BACKGROUND: "0",
+        PUBLIC_BUILD_LABEL: "smoke"
+      },
       stdio: ["ignore", "pipe", "pipe"]
     });
     child.once("error", (error) => {

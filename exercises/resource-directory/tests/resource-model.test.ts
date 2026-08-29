@@ -38,6 +38,9 @@ const records: ResourceRecord[] = [
     featured: false
   }
 ];
+const oldFeatured = records[0];
+const updatedWeb = records[2];
+if (!oldFeatured || !updatedWeb) throw new Error("resource test fixtures are incomplete");
 
 // [Implementation 12-1]
 // These tests catch ordering or serialization changes that would make routes and JSON disagree.
@@ -56,16 +59,16 @@ describe("resource model", () => {
   });
 
   it("serializes dates and copies tag arrays", () => {
-    const summary = toResourceSummary(records[2]);
+    const summary = toResourceSummary(updatedWeb);
     expect(summary.updatedAt).toBe("2026-07-01T00:00:00.000Z");
     expect(summary.categoryLabel).toBe("웹");
     summary.tags.push("changed");
-    expect(records[2].tags).toEqual(["Storage"]);
+    expect(updatedWeb.tags).toEqual(["Storage"]);
   });
 
   it("counts categories and selects related entries without the current entry", () => {
     expect(countResourcesByCategory(records)).toEqual({ web: 2, data: 1, tooling: 0 });
-    expect(selectRelatedResources(records, records[0]).map(({ id }) => id)).toEqual([
+    expect(selectRelatedResources(records, oldFeatured).map(({ id }) => id)).toEqual([
       "updated-web"
     ]);
   });

@@ -56,7 +56,7 @@ function toRecord(entry: ResourceEntry): ResourceRecord {
     category: entry.data.category,
     tags: [...entry.data.tags],
     publishedAt: entry.data.publishedAt,
-    updatedAt: entry.data.updatedAt,
+    ...(entry.data.updatedAt ? { updatedAt: entry.data.updatedAt } : {}),
     featured: entry.data.featured
   };
 }

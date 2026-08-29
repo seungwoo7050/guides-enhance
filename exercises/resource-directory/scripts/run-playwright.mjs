@@ -6,6 +6,9 @@ const port = await findAvailablePort();
 const forwarded = process.argv.slice(2);
 const env = {
   ...process.env,
+  // Astro auto-backgrounds preview when it detects an agent. Playwright must
+  // own a foreground process so it can wait for readiness and stop it.
+  ASTRO_PREVIEW_BACKGROUND: "0",
   RESOURCE_DIRECTORY_E2E_PORT: String(port)
 };
 

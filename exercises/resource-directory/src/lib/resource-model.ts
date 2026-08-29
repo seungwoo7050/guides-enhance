@@ -58,7 +58,7 @@ export function toResourceSummary(resource: ResourceRecord): ResourceSummary {
     categoryLabel: CATEGORY_LABELS[resource.category],
     tags: [...resource.tags],
     publishedAt: resource.publishedAt.toISOString(),
-    updatedAt: resource.updatedAt?.toISOString(),
+    ...(resource.updatedAt ? { updatedAt: resource.updatedAt.toISOString() } : {}),
     featured: resource.featured
   };
 }
