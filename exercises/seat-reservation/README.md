@@ -18,7 +18,7 @@ PostgreSQL과 Kysely로 구현한 좌석 예약 프로젝트입니다. 같은 �
 ```sh
 export POSTGRES_PORT=55432
 docker compose up -d --wait
-export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/reservation
+export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/seat_reservation
 ```
 
 포트를 바꾸면 `POSTGRES_PORT`와 `DATABASE_URL`을 함께 바꿉니다.

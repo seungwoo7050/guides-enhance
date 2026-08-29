@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { RawData, WebSocket } from "ws";
+import WebSocket, { type RawData } from "ws";
 
 import { buildApp } from "./app";
 
@@ -25,6 +25,15 @@ function closed(socket: WebSocket): Promise<number> {
       resolve(code);
     });
   });
+}
+
+async function connect(address: string, headers?: Record<string, string>): Promise<WebSocket> {
+  const socket = new WebSocket(address.replace(/^http/, "ws") + "/ws", { headers });
+  await new Promise<void>((resolve, reject) => {
+    socket.once("open", resolve);
+    socket.once("error", reject);
+  });
+  return socket;
 }
 
 describe("실시간 보드 프로토콜", () => {
@@ -69,8 +78,8 @@ describe("실시간 보드 프로토콜", () => {
     app = await buildApp({
       resolveRole: (request) => request.headers["x-role"] === "viewer" ? "viewer" : "editor"
     });
-    await app.ready();
-    const viewer = await app.injectWS("/ws", { headers: { "x-role": "viewer" } }) as WebSocket;
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const viewer = await connect(address, { "x-role": "viewer" });
     const joined = next(viewer, "board.snapshot");
     viewer.send(JSON.stringify({ type: "board.join", boardId: "planning" }));
     await joined;
@@ -88,13 +97,13 @@ describe("실시간 보드 프로토콜", () => {
 
   it("잘못된 메시지와 참가 전 요청을 거부합니다", async () => {
     app = await buildApp();
-    await app.ready();
-    const malformed = await app.injectWS("/ws") as WebSocket;
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const malformed = await connect(address);
     const malformedClose = closed(malformed);
     malformed.send("{");
     expect(await malformedClose).toBe(1008);
 
-    const unjoined = await app.injectWS("/ws") as WebSocket;
+    const unjoined = await connect(address);
     const unjoinedClose = closed(unjoined);
     unjoined.send(JSON.stringify({ type: "snapshot.request", boardId: "planning" }));
     expect(await unjoinedClose).toBe(1008);
