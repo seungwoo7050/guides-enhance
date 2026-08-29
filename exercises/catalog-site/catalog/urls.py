@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import api, views
 
 app_name = "catalog"
 
@@ -20,4 +20,6 @@ urlpatterns = [
     ),
     path("submissions/new/", views.SubmissionCreateView.as_view(), name="submission-create"),
     path("submissions/mine/", views.SubmissionListView.as_view(), name="submission-list"),
+    path("api/entries/", api.entry_list_api, name="api-entry-list"),
+    path("api/entries/<slug:slug>/", api.entry_detail_api, name="api-entry-detail"),
 ]
