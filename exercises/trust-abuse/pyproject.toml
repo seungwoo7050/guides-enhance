@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trust-abuse"
+version = "1.0.0"
+description = "Authoritative command validation, rate limiting, audit, and alert simulator"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "seungwoo7050"}]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
