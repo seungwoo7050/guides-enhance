@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}항목 목록 · Catalog Site{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <h1>항목 찾기</h1>
+  <p>공개된 항목을 검색하고 category와 tag로 좁혀 볼 수 있습니다.</p>
+</section>
+
+<form class="filters panel" method="get">
+  <label>검색
+    <input name="q" value="{{ current_q }}" placeholder="제목 또는 설명">
+  </label>
+  <label>Category
+    <select name="category">
+      <option value="">전체</option>
+      {% for category in categories %}
+        <option value="{{ category.slug }}"{% if current_category == category.slug %} selected{% endif %}>{{ category.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Tag
+    <select name="tag">
+      <option value="">전체</option>
+      {% for tag in tags %}
+        <option value="{{ tag.slug }}"{% if current_tag == tag.slug %} selected{% endif %}>{{ tag.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">적용</button>
+  <a href="{% url 'catalog:entry-list' %}">초기화</a>
+</form>
+
+<section class="card-grid">
+  {% for entry in entries %}
+    <article class="card">
+      <p class="eyebrow">{{ entry.category.name }}</p>
+      <h2><a href="{{ entry.get_absolute_url }}">{{ entry.title }}</a></h2>
+      <p>{{ entry.summary }}</p>
+      <ul class="tags">
+        {% for tag in entry.tags.all %}<li>{{ tag.name }}</li>{% endfor %}
+      </ul>
+    </article>
+  {% empty %}
+    <p>조건에 맞는 항목이 없습니다.</p>
+  {% endfor %}
+</section>
+
+{% if is_paginated %}
+<nav class="pagination" aria-label="페이지 이동">
+  {% if page_obj.has_previous %}
+    <a href="?q={{ current_q|urlencode }}&amp;category={{ current_category|urlencode }}&amp;tag={{ current_tag|urlencode }}&amp;page={{ page_obj.previous_page_number }}">이전</a>
+  {% endif %}
+  <span>{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}
+    <a href="?q={{ current_q|urlencode }}&amp;category={{ current_category|urlencode }}&amp;tag={{ current_tag|urlencode }}&amp;page={{ page_obj.next_page_number }}">다음</a>
+  {% endif %}
+</nav>
+{% endif %}
+{% endblock %}
