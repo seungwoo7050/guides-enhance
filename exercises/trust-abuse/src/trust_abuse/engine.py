@@ -333,6 +333,192 @@ class TrustEngine:
             return None, "INVALID_COMMAND"
         return command, payload_error
 
+    # [Implementation 5]
+    # Session epoch and connection validation
+    # 인증된 세션의 actor, player, connection, epoch와 요청 값을 모두 비교합니다.
+    def _validate_session(self, command: dict[str, Any]) -> tuple[Session | None, str | None]:
+        session = self.sessions.get(command["session_id"])
+        if session is None or not session.active:
+            return None, "SESSION_NOT_ACTIVE"
+        if session.actor_id != command["actor_id"]:
+            return session, "ACTOR_SESSION_MISMATCH"
+        if session.player_id != command["player_id"]:
+            return session, "PLAYER_SESSION_MISMATCH"
+        if session.connection_id != command["connection_id"]:
+            return session, "CONNECTION_MISMATCH"
+        if session.epoch != command["session_epoch"]:
+            return session, "SESSION_EPOCH_MISMATCH"
+        return session, None
+
+    # [Implementation 5-1]
+    # Room, match, and ownership validation
+    # 현재 방과 경기 참가자에게 허용된 entity만 사용할 수 있게 합니다.
+    def _validate_membership(
+        self, command: dict[str, Any]
+    ) -> tuple[Player | None, str | None]:
+        player = self.players.get(command["player_id"])
+        if player is None:
+            return None, "PLAYER_NOT_FOUND"
+        if player.room_id != command["room_id"]:
+            return None, "ROOM_MISMATCH"
+        if player.match_id != command["match_id"]:
+            return None, "MATCH_MISMATCH"
+        room = self.rooms.get(command["room_id"])
+        match = self.matches.get(command["match_id"])
+        if room is None or player.player_id not in room.player_ids:
+            return None, "ROOM_MEMBERSHIP_MISMATCH"
+        if (
+            match is None
+            or match.state != "RUNNING"
+            or match.room_id != room.room_id
+            or player.player_id not in match.player_ids
+        ):
+            return None, "MATCH_NOT_ACTIVE"
+        return player, None
+
+    def _policy_for(self, kind: str) -> RateLimitPolicy:
+        return self.rate_limits.get(kind, self.default_rate_limit)
+
+    # [Implementation 6]
+    # Logical-time token bucket
+    # 실제 시각 대신 이벤트의 logical time으로 token을 보충합니다.
+    def _consume_rate_limit(
+        self,
+        session: Session,
+        player: Player,
+        kind: str,
+        logical_time: int,
+    ) -> tuple[bool, TokenBucket]:
+        policy = self._policy_for(kind)
+        # [Implementation 6-1]
+        # Reconnect-stable rate-limit keys
+        # connection ID를 key에서 빼 reconnect로 기존 제한을 우회하지 못하게 합니다.
+        key = (session.session_id, player.player_id, kind)
+        bucket = self.buckets.get(key)
+        if bucket is None:
+            bucket = TokenBucket(tokens=policy.capacity, last_tick=logical_time)
+            self.buckets[key] = bucket
+        elapsed = max(0, logical_time - bucket.last_tick)
+        bucket.tokens = min(
+            policy.capacity,
+            bucket.tokens + elapsed * policy.refill_per_tick,
+        )
+        bucket.last_tick = logical_time
+        if bucket.tokens <= 0:
+            return False, bucket
+        bucket.tokens -= 1
+        return True, bucket
+
+    # [Implementation 7]
+    # Validate and prepare authoritative changes
+    # 정본 상태를 직접 바꾸지 않고 적용할 다음 값을 먼저 계산합니다.
+    def _validate_and_prepare_change(
+        self,
+        player: Player,
+        command: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        kind = command["kind"]
+        payload = command["payload"]
+        if kind in ("SET_POSITION", "SET_SCORE", "CLAIM_OWNERSHIP"):
+            return None, "CLIENT_AUTHORITY_VIOLATION"
+        if kind == "MOVE":
+            dx = payload.get("dx")
+            dy = payload.get("dy")
+            if not self._is_int(dx) or not self._is_int(dy):
+                return None, "INVALID_PAYLOAD"
+            if abs(dx) > self.max_move_delta or abs(dy) > self.max_move_delta:
+                return None, "MOVE_LIMIT_EXCEEDED"
+            next_x = player.x + dx
+            next_y = player.y + dy
+            if (
+                next_x < -self.coordinate_limit
+                or next_x > self.coordinate_limit
+                or next_y < -self.coordinate_limit
+                or next_y > self.coordinate_limit
+            ):
+                return None, "COORDINATE_LIMIT_EXCEEDED"
+            return {"kind": "MOVE", "x": next_x, "y": next_y}, None
+        if kind == "USE_OWNED_ENTITY":
+            entity_id = payload.get("entity_id")
+            if not isinstance(entity_id, str) or not entity_id:
+                return None, "INVALID_PAYLOAD"
+            entity = self.entities.get(entity_id)
+            if entity is None:
+                return None, "ENTITY_NOT_FOUND"
+            if entity.room_id != player.room_id or entity.match_id != player.match_id:
+                return None, "ENTITY_SCOPE_MISMATCH"
+            if entity.owner_player_id != player.player_id:
+                return None, "ENTITY_OWNERSHIP_MISMATCH"
+            if entity.use_count >= 2_147_483_647:
+                return None, "ARITHMETIC_OVERFLOW"
+            return {
+                "kind": "USE_OWNED_ENTITY",
+                "entity_id": entity_id,
+                "use_count": entity.use_count + 1,
+            }, None
+        return None, "UNSUPPORTED_COMMAND"
+
+    # [Implementation 7-1]
+    # Commit sequence after state change
+    # 상태 변경이 끝난 뒤에만 sequence를 갱신합니다.
+    def _commit_change(
+        self,
+        player: Player,
+        command: dict[str, Any],
+        change: dict[str, Any],
+    ) -> dict[str, Any]:
+        if change["kind"] == "MOVE":
+            player.x = change["x"]
+            player.y = change["y"]
+            applied = {"player_id": player.player_id, "x": player.x, "y": player.y}
+        else:
+            entity = self.entities[change["entity_id"]]
+            entity.use_count = change["use_count"]
+            applied = {"entity_id": entity.entity_id, "use_count": entity.use_count}
+        player.last_sequence = command["sequence"]
+        applied["last_sequence"] = player.last_sequence
+        return applied
+
+    def _command_fingerprint(self, command: dict[str, Any]) -> str:
+        return digest_value(
+            {
+                key: value
+                for key, value in command.items()
+                if key not in ("payload_size", "payload")
+            }
+        )
+
+    def _redacted_audit(
+        self,
+        command: dict[str, Any],
+        decision: CommandDecision,
+    ) -> dict[str, Any]:
+        actor_id = command.get("authenticated_actor_id", command["actor_id"])
+        return {
+            "audit_id": digest_value(
+                {
+                    "command_id": command["command_id"],
+                    "command_fingerprint": self._command_fingerprint(command),
+                    "decision": decision.status,
+                    "reason_code": decision.reason_code,
+                    "release_id": self.release_id,
+                }
+            ),
+            "actor_id": actor_id,
+            "claimed_actor_id": command["actor_id"],
+            "session_id": command["session_id"],
+            "player_id": command["player_id"],
+            "room_id": command["room_id"],
+            "match_id": command["match_id"],
+            "command_id": command["command_id"],
+            "command_kind": command["kind"],
+            "decision": decision.status,
+            "reason_code": decision.reason_code,
+            "release_id": self.release_id,
+            "payload_size": command["payload_size"],
+            "payload_digest": digest_value(command["safe_payload"]),
+        }
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
