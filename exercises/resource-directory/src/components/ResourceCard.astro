@@ -1,0 +1,23 @@
+---
+import type { ResourceSummary } from "../lib/resource-model";
+
+type Props = { resource: ResourceSummary };
+const { resource } = Astro.props;
+const displayDate = resource.updatedAt ?? resource.publishedAt;
+---
+
+<!-- [Implementation 5-1]
+     Cards receive serialized summaries only; Markdown bodies stay out of list-page props. -->
+<article class="resource-card">
+  <div class="card-meta">
+    <a class="category-chip" href={`/categories/${resource.category}/`}>
+      {resource.categoryLabel}
+    </a>
+    <time datetime={displayDate}>{displayDate.slice(0, 10)}</time>
+  </div>
+  <h2><a href={`/resources/${resource.id}/`}>{resource.title}</a></h2>
+  <p>{resource.summary}</p>
+  <ul class="tag-list" aria-label="태그">
+    {resource.tags.map((tag) => <li>{tag}</li>)}
+  </ul>
+</article>

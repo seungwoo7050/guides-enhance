@@ -1,0 +1,25 @@
+---
+import {
+  CATEGORY_LABELS,
+  RESOURCE_CATEGORIES,
+  type ResourceCategory
+} from "../lib/resource-model";
+
+type Props = { counts: Record<ResourceCategory, number> };
+const { counts } = Astro.props;
+---
+
+<!-- [Implementation 5-2]
+     Category links are generated from the same finite ids accepted by content validation. -->
+<nav class="category-nav" aria-label="자료 분류">
+  <ul>
+    {RESOURCE_CATEGORIES.map((category) => (
+      <li>
+        <a href={`/categories/${category}/`}>
+          <span>{CATEGORY_LABELS[category]}</span>
+          <strong>{counts[category]}</strong>
+        </a>
+      </li>
+    ))}
+  </ul>
+</nav>
