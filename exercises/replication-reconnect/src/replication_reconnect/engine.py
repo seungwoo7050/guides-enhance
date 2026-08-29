@@ -5,6 +5,7 @@ from dataclasses import asdict
 from typing import Any
 
 from .model import ClientReplica, Message, ReplicationConfig
+from .serialization import canonical_size, digest_value
 
 
 class ReplicationEngine:
@@ -621,6 +622,15 @@ class ReplicationEngine:
         return result
 
 
-def run_scenario(scenario):
-    """Expose the package boundary while later lifecycle stages are unfinished."""
-    raise NotImplementedError("scenario execution is introduced in a later implementation stage")
+def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(scenario, dict):
+        raise ValueError("scenario must be an object")
+    engine = ReplicationEngine(scenario)
+    events = scenario.get("events", [])
+    if not isinstance(events, list):
+        raise ValueError("events must be an array")
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("each event must be an object")
+        engine.apply_event(event)
+    return engine.result()

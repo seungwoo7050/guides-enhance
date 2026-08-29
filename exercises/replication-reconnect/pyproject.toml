@@ -6,10 +6,14 @@ build-backend = "setuptools.build_meta"
 name = "replication-reconnect"
 version = "1.0.0"
 description = "Deterministic snapshot, delta, resync, and reconnect simulator"
+readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "seungwoo7050"}]
 dependencies = []
+
+[project.scripts]
+replication-reconnect = "replication_reconnect.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

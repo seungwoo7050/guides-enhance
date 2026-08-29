@@ -1,0 +1,98 @@
+{
+  "config": {
+    "match_id": "demo-match",
+    "protocol_version": 1,
+    "schema_version": 1,
+    "max_pending_deltas": 4,
+    "max_gap": 4,
+    "max_snapshot_bytes": 8192,
+    "max_send_queue_bytes": 1024
+  },
+  "server": {
+    "current_version": 3,
+    "current_state": {"score": 2, "entities": {"alice": {"x": 2, "y": 0}}},
+    "history": [
+      {
+        "message_id": "history-2",
+        "kind": "DELTA",
+        "match_id": "demo-match",
+        "protocol_version": 1,
+        "schema_version": 1,
+        "baseline_version": 1,
+        "version": 2,
+        "operations": [{"op": "INCREMENT", "path": ["score"], "value": 2}]
+      },
+      {
+        "message_id": "history-3",
+        "kind": "DELTA",
+        "match_id": "demo-match",
+        "protocol_version": 1,
+        "schema_version": 1,
+        "baseline_version": 2,
+        "version": 3,
+        "operations": [{"op": "SET", "path": ["entities", "alice", "x"], "value": 2}]
+      }
+    ]
+  },
+  "clients": [
+    {"client_id": "client-1", "state_version": 0, "state": {}, "connected": true}
+  ],
+  "events": [
+    {
+      "event_id": "e1",
+      "kind": "DELIVER",
+      "client_id": "client-1",
+      "message": {
+        "message_id": "snapshot-1",
+        "kind": "SNAPSHOT",
+        "match_id": "demo-match",
+        "protocol_version": 1,
+        "schema_version": 1,
+        "version": 1,
+        "state": {"score": 0, "entities": {"alice": {"x": 0, "y": 0}}}
+      }
+    },
+    {
+      "event_id": "e2",
+      "kind": "DELIVER",
+      "client_id": "client-1",
+      "message": {
+        "message_id": "delta-3",
+        "kind": "DELTA",
+        "match_id": "demo-match",
+        "protocol_version": 1,
+        "schema_version": 1,
+        "baseline_version": 2,
+        "version": 3,
+        "operations": [{"op": "SET", "path": ["entities", "alice", "x"], "value": 2}]
+      }
+    },
+    {
+      "event_id": "e3",
+      "kind": "DELIVER",
+      "client_id": "client-1",
+      "message": {
+        "message_id": "delta-2",
+        "kind": "DELTA",
+        "match_id": "demo-match",
+        "protocol_version": 1,
+        "schema_version": 1,
+        "baseline_version": 1,
+        "version": 2,
+        "operations": [{"op": "INCREMENT", "path": ["score"], "value": 2}]
+      }
+    },
+    {"event_id": "e4", "kind": "DISCONNECT", "client_id": "client-1"},
+    {
+      "event_id": "e5",
+      "kind": "RECONNECT",
+      "client_id": "client-1",
+      "token": {
+        "match_id": "demo-match",
+        "protocol_version": 1,
+        "schema_version": 1,
+        "baseline_version": 3
+      }
+    }
+  ]
+}
