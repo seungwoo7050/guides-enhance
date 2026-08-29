@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "policy_available": true,
+  "now": "2026-08-09T00:00:00Z",
+  "actors": {
+    "user-a": {"tenant_id": "tenant-42"},
+    "user-b": {"tenant_id": "tenant-42"},
+    "user-c": {"tenant_id": "tenant-99"}
+  },
+  "reports": {
+    "report-a": {
+      "owner_id": "user-a",
+      "tenant_id": "tenant-42",
+      "status": "completed"
+    },
+    "report-b": {
+      "owner_id": "user-b",
+      "tenant_id": "tenant-42",
+      "status": "completed"
+    },
+    "report-pending": {
+      "owner_id": "user-a",
+      "tenant_id": "tenant-42",
+      "status": "pending"
+    }
+  },
+  "credentials": {
+    "cred-job-81": {
+      "service_id": "id-report-worker",
+      "tenant_id": "tenant-42",
+      "job_id": "job-81",
+      "object_prefix": "synthetic/tenant-42/job-81/",
+      "expires_at": "2026-08-09T00:30:00Z",
+      "revoked": false
+    },
+    "cred-expired": {
+      "service_id": "id-report-worker",
+      "tenant_id": "tenant-42",
+      "job_id": "job-81",
+      "object_prefix": "synthetic/tenant-42/job-81/",
+      "expires_at": "2026-08-08T23:59:59Z",
+      "revoked": false
+    },
+    "cred-at-expiry": {
+      "service_id": "id-report-worker",
+      "tenant_id": "tenant-42",
+      "job_id": "job-81",
+      "object_prefix": "synthetic/tenant-42/job-81/",
+      "expires_at": "2026-08-09T00:00:00Z",
+      "revoked": false
+    },
+    "cred-revoked": {
+      "service_id": "id-report-worker",
+      "tenant_id": "tenant-42",
+      "job_id": "job-81",
+      "object_prefix": "synthetic/tenant-42/job-81/",
+      "expires_at": "2026-08-09T00:30:00Z",
+      "revoked": true
+    }
+  }
+}
