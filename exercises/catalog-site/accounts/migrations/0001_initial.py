@@ -64,7 +64,7 @@ class Migration(migrations.Migration):
                     "last_name",
                     models.CharField(blank=True, max_length=150, verbose_name="last name"),
                 ),
-                ("email", models.EmailField(max_length=254, unique=True, verbose_name="email address")),
+                ("email", models.EmailField(max_length=254, unique=True)),
                 (
                     "is_staff",
                     models.BooleanField(
@@ -93,8 +93,8 @@ class Migration(migrations.Migration):
                     models.ManyToManyField(
                         blank=True,
                         help_text=(
-                            "The groups this user belongs to. A user gets all permissions "
-                            "granted to each group."
+                            "The groups this user belongs to. A user will get all permissions "
+                            "granted to each of their groups."
                         ),
                         related_name="user_set",
                         related_query_name="user",
