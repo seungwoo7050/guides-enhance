@@ -168,6 +168,105 @@ def _command_order(command: Command) -> tuple[int, str, int, int, str]:
     )
 
 
+# [Implementation 4]
+# Payload range and arithmetic checks
+# Python 정수가 커질 수 있더라도 설정한 좌표와 점수 한도는 넘지 못하게 합니다.
+def _checked_add(left: int, right: int, lower: int, upper: int) -> int | None:
+    result = left + right
+    if result < lower or result > upper:
+        return None
+    return result
+
+
+def _apply_payload(
+    player: PlayerState,
+    command: Command,
+    config: SimulationConfig,
+) -> str:
+    if command.kind == "MOVE":
+        dx = command.payload.get("dx")
+        dy = command.payload.get("dy")
+        if not _is_int(dx) or not _is_int(dy):
+            return REASON_INVALID_PAYLOAD
+        if abs(dx) > config.max_move_delta or abs(dy) > config.max_move_delta:
+            return REASON_RANGE_VIOLATION
+        next_x = _checked_add(
+            player.x,
+            dx,
+            -config.coordinate_limit,
+            config.coordinate_limit,
+        )
+        next_y = _checked_add(
+            player.y,
+            dy,
+            -config.coordinate_limit,
+            config.coordinate_limit,
+        )
+        if next_x is None or next_y is None:
+            return REASON_ARITHMETIC_OVERFLOW
+        player.x = next_x
+        player.y = next_y
+        return REASON_APPLIED
+
+    if command.kind == "ADD_SCORE":
+        delta = command.payload.get("delta")
+        if not _is_int(delta):
+            return REASON_INVALID_PAYLOAD
+        if delta < 0 or delta > config.max_score_delta:
+            return REASON_RANGE_VIOLATION
+        next_score = _checked_add(player.score, delta, 0, config.score_limit)
+        if next_score is None:
+            return REASON_ARITHMETIC_OVERFLOW
+        player.score = next_score
+        return REASON_APPLIED
+
+    return REASON_UNSUPPORTED_COMMAND
+
+
+# [Implementation 5]
+# Authoritative command validation
+# 모든 검사를 통과하기 전에는 플레이어의 정본 상태를 확정하지 않습니다.
+def _execute_command(
+    command: Command,
+    players: dict[str, PlayerState],
+    config: SimulationConfig,
+) -> Decision:
+    if command.match_id != config.match_id:
+        return Decision(command.command_id, command.target_tick, "REJECTED", REASON_MATCH_MISMATCH)
+    player = players.get(command.player_id)
+    if player is None:
+        return Decision(
+            command.command_id,
+            command.target_tick,
+            "REJECTED",
+            REASON_PLAYER_NOT_FOUND,
+        )
+
+    # [Implementation 5-1]
+    # Session epoch and sequence checks
+    # 거절된 명령은 sequence를 소비하지 않아 다음 정상 명령을 막지 않습니다.
+    if command.session_epoch != player.session_epoch:
+        return Decision(
+            command.command_id,
+            command.target_tick,
+            "REJECTED",
+            REASON_SESSION_EPOCH_MISMATCH,
+        )
+    if command.sequence <= player.last_sequence:
+        return Decision(command.command_id, command.target_tick, "REJECTED", REASON_STALE_SEQUENCE)
+    if command.sequence != player.last_sequence + 1:
+        return Decision(command.command_id, command.target_tick, "REJECTED", REASON_SEQUENCE_GAP)
+
+    # 페이로드 처리 중 실패해도 원래 상태로 되돌릴 수 있도록 변경 전 값을 보관합니다.
+    before = (player.x, player.y, player.score, player.last_sequence)
+    reason = _apply_payload(player, command, config)
+    if reason != REASON_APPLIED:
+        player.x, player.y, player.score, player.last_sequence = before
+        return Decision(command.command_id, command.target_tick, "REJECTED", reason)
+    player.last_sequence = command.sequence
+    return Decision(command.command_id, command.target_tick, "APPLIED", REASON_APPLIED)
+
+
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
     raise NotImplementedError("scenario execution is introduced in a later implementation stage")
