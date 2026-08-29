@@ -1,0 +1,64 @@
+[
+  {
+    "model": "catalog.category",
+    "pk": 1,
+    "fields": {
+      "name": "Games",
+      "slug": "games",
+      "description": "Game information and play-time references."
+    }
+  },
+  {
+    "model": "catalog.category",
+    "pk": 2,
+    "fields": {
+      "name": "Travel",
+      "slug": "travel",
+      "description": "Practical place and travel information."
+    }
+  },
+  {
+    "model": "catalog.tag",
+    "pk": 1,
+    "fields": {"name": "Community Data", "slug": "community-data"}
+  },
+  {
+    "model": "catalog.tag",
+    "pk": 2,
+    "fields": {"name": "Reference", "slug": "reference"}
+  },
+  {
+    "model": "catalog.entry",
+    "pk": 1,
+    "fields": {
+      "title": "Sample Game Playtime",
+      "slug": "sample-game-playtime",
+      "summary": "A sample entry showing categorized play-time information.",
+      "description": "This fixture is intentionally small. Replace it with data gathered and verified for the actual service.",
+      "category": 1,
+      "tags": [1, 2],
+      "status": "published",
+      "created_by": null,
+      "published_at": "2026-01-15T00:00:00Z",
+      "created_at": "2026-01-15T00:00:00Z",
+      "updated_at": "2026-01-15T00:00:00Z"
+    }
+  },
+  {
+    "model": "catalog.entry",
+    "pk": 2,
+    "fields": {
+      "title": "Sample Airport Rest Area",
+      "slug": "sample-airport-rest-area",
+      "summary": "A sample entry for traveler-submitted facility information.",
+      "description": "The record demonstrates the same catalog model with another category. It is not presented as verified real-world data.",
+      "category": 2,
+      "tags": [1],
+      "status": "published",
+      "created_by": null,
+      "published_at": "2026-01-16T00:00:00Z",
+      "created_at": "2026-01-16T00:00:00Z",
+      "updated_at": "2026-01-16T00:00:00Z"
+    }
+  }
+]
