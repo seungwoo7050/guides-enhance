@@ -1,0 +1,25 @@
+---
+import ResourceCard from "../../components/ResourceCard.astro";
+import SiteLayout from "../../layouts/SiteLayout.astro";
+import { getPublishedResources } from "../../lib/resources";
+
+// [Implementation 6-2]
+// The archive renders the same ordered summaries used by categories and the JSON endpoint.
+const resources = await getPublishedResources();
+---
+
+<SiteLayout
+  title="전체 자료"
+  description="Resource Directory에 공개된 모든 기술 자료를 확인합니다."
+  canonicalPath="/resources/"
+>
+  <header class="page-heading">
+    <p class="eyebrow">All resources</p>
+    <h1>전체 자료</h1>
+    <p>{resources.length}개의 자료가 build에서 확인되었습니다.</p>
+  </header>
+
+  <div class="card-grid">
+    {resources.map(({ summary }) => <ResourceCard resource={summary} />)}
+  </div>
+</SiteLayout>

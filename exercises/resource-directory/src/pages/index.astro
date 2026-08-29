@@ -1,0 +1,63 @@
+---
+import { Image } from "astro:assets";
+import CategoryNav from "../components/CategoryNav.astro";
+import ResourceCard from "../components/ResourceCard.astro";
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { getCategoryCounts, getPublishedResources } from "../lib/resources";
+import overview from "../assets/directory-overview.png";
+
+// [Implementation 6]
+// The home route reads the published collection once and derives all visible sections from it.
+const resources = await getPublishedResources();
+const featured = resources.filter(({ summary }) => summary.featured).slice(0, 3);
+const counts = getCategoryCounts(resources);
+---
+
+<SiteLayout canonicalPath="/">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Static first, interactive where needed</p>
+      <h1>필요할 때 다시 찾을 수 있는 기술 자료</h1>
+      <p>
+        구조가 같은 Markdown을 build에서 검사하고, 정적 route와 JSON 파일을 함께 생성합니다.
+        브라우저 JavaScript는 상세 페이지의 즐겨찾기 버튼에만 사용합니다.
+      </p>
+      <div class="hero-actions">
+        <a class="primary-link" href="/resources/">전체 자료 보기</a>
+        <a href="/resources.json">JSON 목록</a>
+      </div>
+    </div>
+    <!-- [Implementation 6-1]
+         Local image metadata fixes layout size and lets Astro emit an optimized build asset. -->
+    <Image
+      src={overview}
+      alt="카드 형태의 자료가 세 분류로 정리된 모습"
+      widths={[480, 800, 1200]}
+      sizes="(max-width: 48rem) 100vw, 42vw"
+      loading="eager"
+    />
+  </section>
+
+  <section aria-labelledby="category-title">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Categories</p>
+        <h2 id="category-title">분류별로 찾기</h2>
+      </div>
+    </div>
+    <CategoryNav counts={counts} />
+  </section>
+
+  <section aria-labelledby="featured-title">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Featured</p>
+        <h2 id="featured-title">먼저 볼 자료</h2>
+      </div>
+      <a href="/resources/">전체 보기</a>
+    </div>
+    <div class="card-grid">
+      {featured.map(({ summary }) => <ResourceCard resource={summary} />)}
+    </div>
+  </section>
+</SiteLayout>
