@@ -1,0 +1,88 @@
+{
+  "config": {
+    "release_id": "2026.08.1",
+    "max_payload_bytes": 256,
+    "max_move_delta": 4,
+    "coordinate_limit": 100,
+    "alert_threshold": 2,
+    "default_rate_limit": {"capacity": 4, "refill_per_tick": 1},
+    "rate_limits": {
+      "MOVE": {"capacity": 3, "refill_per_tick": 1},
+      "USE_OWNED_ENTITY": {"capacity": 2, "refill_per_tick": 1}
+    }
+  },
+  "initial_state": {
+    "sessions": [
+      {"session_id": "session-alice", "actor_id": "account-alice", "player_id": "alice", "connection_id": "connection-1", "session_epoch": 1}
+    ],
+    "players": [
+      {"player_id": "alice", "session_id": "session-alice", "room_id": "room-1", "match_id": "match-1", "x": 0, "y": 0, "score": 0, "last_sequence": 0}
+    ],
+    "rooms": [
+      {"room_id": "room-1", "player_ids": ["alice"]}
+    ],
+    "matches": [
+      {"match_id": "match-1", "room_id": "room-1", "state": "RUNNING", "player_ids": ["alice"]}
+    ],
+    "entities": [
+      {"entity_id": "alice-turret", "room_id": "room-1", "match_id": "match-1", "owner_player_id": "alice", "use_count": 0}
+    ]
+  },
+  "events": [
+    {
+      "event_id": "e1",
+      "kind": "COMMAND",
+      "logical_time": 0,
+      "command": {
+        "command_id": "move-1",
+        "actor_id": "account-alice",
+        "session_id": "session-alice",
+        "connection_id": "connection-1",
+        "session_epoch": 1,
+        "player_id": "alice",
+        "room_id": "room-1",
+        "match_id": "match-1",
+        "sequence": 1,
+        "kind": "MOVE",
+        "payload": {"dx": 2, "dy": 1},
+        "auth_token": "not-written-to-audit"
+      }
+    },
+    {
+      "event_id": "e2",
+      "kind": "COMMAND",
+      "logical_time": 1,
+      "command": {
+        "command_id": "entity-2",
+        "actor_id": "account-alice",
+        "session_id": "session-alice",
+        "connection_id": "connection-1",
+        "session_epoch": 1,
+        "player_id": "alice",
+        "room_id": "room-1",
+        "match_id": "match-1",
+        "sequence": 2,
+        "kind": "USE_OWNED_ENTITY",
+        "payload": {"entity_id": "alice-turret"}
+      }
+    },
+    {
+      "event_id": "e3",
+      "kind": "COMMAND",
+      "logical_time": 2,
+      "command": {
+        "command_id": "forged-score-3",
+        "actor_id": "account-alice",
+        "session_id": "session-alice",
+        "connection_id": "connection-1",
+        "session_epoch": 1,
+        "player_id": "alice",
+        "room_id": "room-1",
+        "match_id": "match-1",
+        "sequence": 3,
+        "kind": "SET_SCORE",
+        "payload": {"score": 999999}
+      }
+    }
+  ]
+}

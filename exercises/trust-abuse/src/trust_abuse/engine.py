@@ -15,6 +15,7 @@ from .model import (
     Session,
     TokenBucket,
 )
+from .serialization import canonical_size, digest_value
 
 
 class TrustEngine:
@@ -687,7 +688,91 @@ class TrustEngine:
             }
         )
 
+    # [Implementation 10]
+    # Order-stable alert aggregation
+    # actor, match, reason별 고유 command ID 집합으로 계산해 입력 순서와 중복의 영향을 없앱니다.
+    def _alerts(self) -> list[dict[str, Any]]:
+        alerts: list[dict[str, Any]] = []
+        for key in sorted(self.denial_groups):
+            command_ids = sorted(self.denial_groups[key])
+            if len(command_ids) >= self.alert_threshold:
+                actor_id, match_id, reason_code = key
+                alerts.append(
+                    {
+                        "correlation_id": digest_value(
+                            {
+                                "actor_id": actor_id,
+                                "match_id": match_id,
+                                "reason_code": reason_code,
+                            }
+                        ),
+                        "actor_id": actor_id,
+                        "match_id": match_id,
+                        "reason_code": reason_code,
+                        "unique_command_count": len(command_ids),
+                        "command_ids": command_ids,
+                    }
+                )
+        return alerts
 
-def run_scenario(scenario):
-    """Expose the package boundary while later lifecycle stages are unfinished."""
-    raise NotImplementedError("scenario execution is introduced in a later implementation stage")
+    def _state_dict(self) -> dict[str, Any]:
+        return {
+            "sessions": [asdict(self.sessions[item]) for item in sorted(self.sessions)],
+            "players": [asdict(self.players[item]) for item in sorted(self.players)],
+            "rooms": [
+                {
+                    "room_id": self.rooms[item].room_id,
+                    "player_ids": sorted(self.rooms[item].player_ids),
+                }
+                for item in sorted(self.rooms)
+            ],
+            "matches": [
+                {
+                    "match_id": self.matches[item].match_id,
+                    "room_id": self.matches[item].room_id,
+                    "state": self.matches[item].state,
+                    "player_ids": sorted(self.matches[item].player_ids),
+                }
+                for item in sorted(self.matches)
+            ],
+            "entities": [asdict(self.entities[item]) for item in sorted(self.entities)],
+        }
+
+    def _bucket_list(self) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for key in sorted(self.buckets):
+            session_id, player_id, kind = key
+            bucket = self.buckets[key]
+            result.append(
+                {
+                    "session_id": session_id,
+                    "player_id": player_id,
+                    "command_kind": kind,
+                    "tokens": bucket.tokens,
+                    "last_tick": bucket.last_tick,
+                }
+            )
+        return result
+
+    def result(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "trace": self.trace,
+            "authoritative_state": self._state_dict(),
+            "rate_limit_buckets": self._bucket_list(),
+            "audit_events": self.audit_events,
+            "alerts": self._alerts(),
+        }
+        result["digest"] = digest_value(result)
+        return result
+
+
+def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
+    engine = TrustEngine(scenario)
+    events = scenario.get("events", [])
+    if not isinstance(events, list):
+        raise ValueError("events must be an array")
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("each event must be an object")
+        engine.apply_event(event)
+    return engine.result()
