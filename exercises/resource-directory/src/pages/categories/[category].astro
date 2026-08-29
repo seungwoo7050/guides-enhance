@@ -1,0 +1,47 @@
+---
+import ResourceCard from "../../components/ResourceCard.astro";
+import SiteLayout from "../../layouts/SiteLayout.astro";
+import {
+  CATEGORY_LABELS,
+  RESOURCE_CATEGORIES,
+  type ResourceCategory
+} from "../../lib/resource-model";
+import { getPublishedResources, type PublishedResource } from "../../lib/resources";
+
+export async function getStaticPaths() {
+  const resources = await getPublishedResources();
+  return RESOURCE_CATEGORIES.map((category) => ({
+    params: { category },
+    props: {
+      category,
+      resources: resources.filter(({ summary }) => summary.category === category)
+    }
+  }));
+}
+
+type Props = {
+  category: ResourceCategory;
+  resources: PublishedResource[];
+};
+
+// [Implementation 7-2]
+// Only the finite category set can create routes; unknown values fall through to the static 404 page.
+const { category, resources } = Astro.props;
+const label = CATEGORY_LABELS[category];
+---
+
+<SiteLayout
+  title={`${label} 자료`}
+  description={`${label} 분류에 속한 기술 자료를 확인합니다.`}
+  canonicalPath={`/categories/${category}/`}
+>
+  <header class="page-heading">
+    <p class="eyebrow">Category</p>
+    <h1>{label} 자료</h1>
+    <p>{resources.length}개의 공개 자료가 있습니다.</p>
+  </header>
+
+  <div class="card-grid">
+    {resources.map(({ summary }) => <ResourceCard resource={summary} />)}
+  </div>
+</SiteLayout>

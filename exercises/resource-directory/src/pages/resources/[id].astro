@@ -1,0 +1,77 @@
+---
+import { render } from "astro:content";
+import ResourceCard from "../../components/ResourceCard.astro";
+import SiteLayout from "../../layouts/SiteLayout.astro";
+import {
+  getPublishedResources,
+  getRelatedResources,
+  type PublishedResource
+} from "../../lib/resources";
+
+export async function getStaticPaths() {
+  const resources = await getPublishedResources();
+  return resources.map((resource) => ({
+    params: { id: resource.entry.id },
+    props: { resource }
+  }));
+}
+
+type Props = { resource: PublishedResource };
+
+// [Implementation 7]
+// getStaticPaths fixes the complete detail-route set at build time from validated content ids.
+const { resource } = Astro.props;
+const resources = await getPublishedResources();
+const related = getRelatedResources(resources, resource);
+
+// [Implementation 7-1]
+// Markdown is compiled only on the detail route; list pages receive summaries without body content.
+const { Content, headings } = await render(resource.entry);
+const canonicalPath = `/resources/${resource.entry.id}/`;
+---
+
+<SiteLayout
+  title={resource.summary.title}
+  description={resource.summary.summary}
+  canonicalPath={canonicalPath}
+>
+  <article class="resource-detail">
+    <header>
+      <a class="category-chip" href={`/categories/${resource.summary.category}/`}>
+        {resource.summary.categoryLabel}
+      </a>
+      <h1>{resource.summary.title}</h1>
+      <p class="lead">{resource.summary.summary}</p>
+      <div class="detail-actions">
+        {resource.entry.data.sourceUrl && (
+          <a href={resource.entry.data.sourceUrl} rel="noreferrer">원문 확인</a>
+        )}
+      </div>
+    </header>
+
+    <div class="article-layout">
+      <div class="prose"><Content /></div>
+      {headings.length > 1 && (
+        <aside class="toc" aria-label="문서 목차">
+          <h2>목차</h2>
+          <ol>
+            {headings.filter(({ depth }) => depth === 2).map(({ slug, text }) => (
+              <li><a href={`#${slug}`}>{text}</a></li>
+            ))}
+          </ol>
+        </aside>
+      )}
+    </div>
+  </article>
+
+  {related.length > 0 && (
+    <section aria-labelledby="related-title">
+      <div class="section-heading">
+        <h2 id="related-title">같은 분류의 자료</h2>
+      </div>
+      <div class="card-grid">
+        {related.map(({ summary }) => <ResourceCard resource={summary} />)}
+      </div>
+    </section>
+  )}
+</SiteLayout>
