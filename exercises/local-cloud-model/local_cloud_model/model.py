@@ -205,3 +205,129 @@ class CloudModel:
 
     def usage_for(self, tenant_id: str) -> int:
         return self._usage.get(tenant_id, 0)
+
+    # [Implementation 7]
+    # Tenant deletion cleanup.
+    def delete_tenant(self, tenant_id: str) -> None:
+        tenant = self._tenants.get(tenant_id)
+        if tenant is None or tenant["state"] == "DELETED":
+            return
+
+        tenant["state"] = "DELETED"
+        self._documents = {
+            document_id: document
+            for document_id, document in self._documents.items()
+            if document["tenant_id"] != tenant_id
+        }
+        self._outputs = {
+            output_id: output
+            for output_id, output in self._outputs.items()
+            if output["tenant_id"] != tenant_id
+        }
+        self._queue = deque(
+            event for event in self._queue if event.tenant_id != tenant_id
+        )
+        self._dead_letters = [
+            event for event in self._dead_letters if event.tenant_id != tenant_id
+        ]
+
+        tenant_event_ids = {
+            identity
+            for identity in self._event_registry
+            if identity[0] == tenant_id
+        }
+        for identity in tenant_event_ids:
+            del self._event_registry[identity]
+        self._processed_events.difference_update(tenant_event_ids)
+        self._resources = [
+            resource
+            for resource in self._resources
+            if resource["tenant_id"] != tenant_id
+        ]
+        # 삭제 표시와 누적 usage는 종료 사실을 확인하는 자료이므로 유지합니다.
+
+    def resource_inventory(self) -> list[dict[str, Any]]:
+        return [
+            dict(resource)
+            for resource in sorted(self._resources, key=lambda item: item["id"])
+        ]
+
+    # [Implementation 8]
+    # Content-free deterministic snapshots.
+    def evidence_snapshot(self, tenant_id: str) -> dict[str, Any]:
+        tenant = self._tenants.get(tenant_id)
+        documents = sorted(
+            document_id
+            for document_id, document in self._documents.items()
+            if document["tenant_id"] == tenant_id
+        )
+        outputs = sorted(
+            output_id
+            for output_id, output in self._outputs.items()
+            if output["tenant_id"] == tenant_id
+        )
+        pending = sorted(
+            (
+                {
+                    "event_id": event.event_id,
+                    "document_id": event.document_id,
+                    "attempts": event.attempts,
+                }
+                for event in self._queue
+                if event.tenant_id == tenant_id
+            ),
+            key=lambda item: (
+                item["event_id"],
+                item["document_id"],
+                item["attempts"],
+            ),
+        )
+        dead_letters = sorted(
+            (
+                {
+                    "event_id": event.event_id,
+                    "document_id": event.document_id,
+                    "attempts": event.attempts,
+                }
+                for event in self._dead_letters
+                if event.tenant_id == tenant_id
+            ),
+            key=lambda item: (
+                item["event_id"],
+                item["document_id"],
+                item["attempts"],
+            ),
+        )
+        event_registry = sorted(
+            (
+                {
+                    "event_id": event_id,
+                    "document_id": document_id,
+                    "processed": (registered_tenant, event_id)
+                    in self._processed_events,
+                }
+                for (
+                    registered_tenant,
+                    event_id,
+                ), document_id in self._event_registry.items()
+                if registered_tenant == tenant_id
+            ),
+            key=lambda item: item["event_id"],
+        )
+        resources = [
+            resource
+            for resource in self.resource_inventory()
+            if resource["tenant_id"] == tenant_id
+        ]
+
+        return {
+            "tenant_id": tenant_id,
+            "tenant": dict(tenant) if tenant is not None else None,
+            "active_documents": documents,
+            "active_outputs": outputs,
+            "pending_events": pending,
+            "dead_letters": dead_letters,
+            "event_registry": event_registry,
+            "resources": resources,
+            "usage_evidence": self.usage_for(tenant_id),
+        }
