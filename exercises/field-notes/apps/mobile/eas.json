@@ -1,0 +1,35 @@
+{
+  "cli": {
+    "requireCommit": true,
+    "appVersionSource": "local"
+  },
+  "build": {
+    "base": {
+      "node": "24.19.0"
+    },
+    "development": {
+      "extends": "base",
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "FIELD_NOTES_BUILD_PROFILE": "development"
+      }
+    },
+    "preview": {
+      "extends": "base",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "FIELD_NOTES_BUILD_PROFILE": "preview"
+      }
+    },
+    "production": {
+      "extends": "base",
+      "env": {
+        "FIELD_NOTES_BUILD_PROFILE": "production"
+      }
+    }
+  }
+}

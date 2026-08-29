@@ -1,0 +1,16 @@
+{
+  "name": "@field-notes/release-contract",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "validate:fixtures": "node --experimental-strip-types src/cli.ts fixtures/android.json fixtures/ios.json",
+    "validate:eas": "node --experimental-strip-types src/eas-cli.ts ../../apps/mobile/eas.json",
+    "digest:directory-tree": "node --experimental-strip-types src/directory-tree-cli.ts"
+  }
+}

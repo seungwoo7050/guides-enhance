@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 2,
+  "source": {
+    "revision": "release-2026-08-22",
+    "treeSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "lockSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "build": {
+    "profile": "production",
+    "tool": "eas-build",
+    "generatedConfigSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "application": {
+    "platform": "android",
+    "applicationId": "com.example.fieldnotes",
+    "version": "1.0.0",
+    "buildNumber": "42",
+    "runtimeVersion": "1.0.0",
+    "runtimeFingerprint": "runtime-1"
+  },
+  "artifacts": [
+    {
+      "ref": "android-aab",
+      "kind": "android-aab",
+      "identity": {
+        "kind": "local-bytes",
+        "fileName": "field-notes.aab",
+        "byteSize": 1000,
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "signing": {
+        "status": "not-run",
+        "reason": "fixture"
+      }
+    },
+    {
+      "ref": "android-apk",
+      "kind": "android-apk",
+      "identity": {
+        "kind": "local-bytes",
+        "fileName": "field-notes.apk",
+        "byteSize": 900,
+        "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "signing": {
+        "status": "not-run",
+        "reason": "fixture"
+      }
+    }
+  ],
+  "installation": {
+    "status": "verified",
+    "artifactRef": "android-apk",
+    "deviceClass": "physical",
+    "redactedDeviceId": "pixel-redacted",
+    "observedApplicationId": "com.example.fieldnotes",
+    "observedVersion": "1.0.0",
+    "observedBuildNumber": "42",
+    "observedRuntimeVersion": "1.0.0",
+    "observedRuntimeFingerprint": "runtime-1",
+    "launchResult": "passed",
+    "observedAt": "2026-08-22T00:00:00.000Z",
+    "evidenceRef": "android-launch.txt"
+  },
+  "store": {
+    "status": "not-run",
+    "reason": "fixture"
+  }
+}
