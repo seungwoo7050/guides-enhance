@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}내 제보 · Catalog Site{% endblock %}
+
+{% block content %}
+<section class="section-heading">
+  <h1>내 제보</h1>
+  <a class="button" href="{% url 'catalog:submission-create' %}">새 제보</a>
+</section>
+
+<div class="stack">
+  {% for submission in submissions %}
+    <article class="panel">
+      <p class="eyebrow">{{ submission.get_status_display }}</p>
+      <h2>{{ submission.title }}</h2>
+      <p>{{ submission.summary }}</p>
+      {% if submission.moderation_note %}<p><strong>검수 메모:</strong> {{ submission.moderation_note }}</p>{% endif %}
+      {% if submission.created_entry %}<p>생성된 draft: {{ submission.created_entry.title }}</p>{% endif %}
+    </article>
+  {% empty %}
+    <p>제출한 제보가 없습니다.</p>
+  {% endfor %}
+</div>
+
+{% if is_paginated %}
+<nav class="pagination">
+  {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">이전</a>{% endif %}
+  <span>{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">다음</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}신규 항목 제보 · Catalog Site{% endblock %}
+
+{% block content %}
+<section class="panel narrow">
+  <h1>신규 항목 제보</h1>
+  <p>운영자가 내용을 확인한 뒤 draft 항목으로 옮깁니다.</p>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">제보 제출</button>
+  </form>
+</section>
+{% endblock %}

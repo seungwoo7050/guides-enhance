@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}후기 삭제 · Catalog Site{% endblock %}
+
+{% block content %}
+<section class="panel narrow">
+  <h1>후기를 삭제하시겠습니까?</h1>
+  <p>{{ object.body|truncatechars:120 }}</p>
+  <form method="post">
+    {% csrf_token %}
+    <button class="danger" type="submit">삭제</button>
+    <a href="{{ object.entry.get_absolute_url }}">취소</a>
+  </form>
+</section>
+{% endblock %}

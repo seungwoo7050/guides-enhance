@@ -8,7 +8,34 @@
   <link rel="stylesheet" href="{% static 'catalog/site.css' %}">
 </head>
 <body>
-  <header class="site-header"><nav><a href="{% url 'catalog:entry-list' %}">Catalog</a></nav></header>
-  <main>{% block content %}{% endblock %}</main>
+<header class="site-header">
+  <div class="container nav">
+    <a class="brand" href="{% url 'catalog:entry-list' %}">Catalog Site</a>
+    <nav>
+      <a href="{% url 'catalog:entry-list' %}">항목</a>
+      {% if user.is_authenticated %}
+        <a href="{% url 'catalog:submission-create' %}">제보</a>
+        <a href="{% url 'catalog:submission-list' %}">내 제보</a>
+        {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
+        <form class="inline" method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button class="link-button" type="submit">로그아웃</button>
+        </form>
+      {% else %}
+        <a href="{% url 'login' %}">로그인</a>
+        <a href="{% url 'accounts:signup' %}">회원가입</a>
+      {% endif %}
+    </nav>
+  </div>
+</header>
+
+<main class="container">
+  {% if messages %}
+    <ul class="messages">
+      {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
 </body>
 </html>

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}{{ entry.title }} · Catalog Site{% endblock %}
+
+{% block content %}
+<article class="panel entry-detail">
+  <p class="eyebrow">{{ entry.category.name }}</p>
+  <h1>{{ entry.title }}</h1>
+  <p class="lead">{{ entry.summary }}</p>
+  <div class="prose">{{ entry.description|linebreaks }}</div>
+  <ul class="tags">
+    {% for tag in entry.tags.all %}<li>{{ tag.name }}</li>{% endfor %}
+  </ul>
+</article>
+
+<section class="reviews">
+  <div class="section-heading">
+    <h2>후기</h2>
+    {% if user.is_authenticated %}
+      <a class="button" href="{% url 'catalog:review-create' entry.slug %}">후기 작성</a>
+    {% else %}
+      <a href="{% url 'login' %}?next={{ request.path|urlencode }}">로그인 후 작성</a>
+    {% endif %}
+  </div>
+
+  {% for review in entry.visible_reviews %}
+    <article class="panel review">
+      <header>
+        <strong>{{ review.author }}</strong>
+        <span>{{ review.rating }}/5</span>
+      </header>
+      <p>{{ review.body|linebreaksbr }}</p>
+      {% if user == review.author %}
+        <p>
+          <a href="{% url 'catalog:review-update' entry.slug review.pk %}">수정</a>
+          <a href="{% url 'catalog:review-delete' entry.slug review.pk %}">삭제</a>
+        </p>
+      {% endif %}
+    </article>
+  {% empty %}
+    <p>아직 공개된 후기가 없습니다.</p>
+  {% endfor %}
+</section>
+{% endblock %}

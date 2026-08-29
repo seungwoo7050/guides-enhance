@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}후기 작성 · Catalog Site{% endblock %}
+
+{% block content %}
+<section class="panel narrow">
+  <h1>{% if object %}후기 수정{% else %}후기 작성{% endif %}</h1>
+  {% if entry %}<p>{{ entry.title }}</p>{% elif object %}<p>{{ object.entry.title }}</p>{% endif %}
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">저장</button>
+  </form>
+</section>
+{% endblock %}
