@@ -1,0 +1,17 @@
+{
+  "name": "@field-notes/sync-engine",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@field-notes/core": "1.0.0",
+    "@field-notes/fault-server": "1.0.0"
+  }
+}
