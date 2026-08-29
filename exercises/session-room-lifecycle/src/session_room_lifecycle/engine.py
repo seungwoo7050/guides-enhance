@@ -319,6 +319,226 @@ class LifecycleEngine:
         connection.session_id = session_id
         return self._decision(raw, ACCEPTED, "RECONNECTED")
 
+    # [Implementation 4]
+    # Room creation and membership
+    # 방의 정원 확인과 참가자 추가를 한 이벤트 처리 안에서 끝냅니다.
+    def _on_create_room(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        if self.server_state != "ACTIVE":
+            return self._decision(raw, REJECTED, "SERVER_DRAINING")
+        player, error = self._authenticated_player(raw)
+        if error:
+            return self._decision(raw, REJECTED, error)
+        assert player is not None
+        room_id = str(raw.get("room_id", ""))
+        if not room_id:
+            return self._decision(raw, REJECTED, "INVALID_ROOM_ID")
+        if room_id in self.rooms:
+            return self._decision(raw, REJECTED, "ROOM_ALREADY_EXISTS")
+        if player.room_id is not None:
+            return self._decision(raw, REJECTED, "PLAYER_ALREADY_IN_ROOM")
+        room = Room(room_id=room_id, owner_player_id=player.player_id)
+        room.player_ids.add(player.player_id)
+        self.rooms[room_id] = room
+        player.room_id = room_id
+        player.ready = False
+        created.append(f"room:{room_id}")
+        return self._decision(raw, ACCEPTED, "ROOM_CREATED")
+
+    # [Implementation 4-1]
+    # Duplicate-safe readiness updates
+    # 같은 참가 또는 준비 이벤트가 다시 와도 인원수와 준비 상태를 두 번 바꾸지 않습니다.
+    def _on_join_room(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        if self.server_state != "ACTIVE":
+            return self._decision(raw, REJECTED, "SERVER_DRAINING")
+        player, error = self._authenticated_player(raw)
+        if error:
+            return self._decision(raw, REJECTED, error)
+        assert player is not None
+        room_id = str(raw.get("room_id", ""))
+        room = self.rooms.get(room_id)
+        if room is None:
+            return self._decision(raw, REJECTED, "ROOM_NOT_FOUND")
+        if room.state not in ("OPEN", "READY"):
+            return self._decision(raw, REJECTED, "ROOM_NOT_JOINABLE")
+        if player.room_id == room_id:
+            return self._decision(raw, IGNORED, "ALREADY_IN_ROOM")
+        if player.room_id is not None:
+            return self._decision(raw, REJECTED, "PLAYER_ALREADY_IN_ROOM")
+        room.player_ids.add(player.player_id)
+        room.state = "OPEN"
+        player.room_id = room_id
+        player.ready = False
+        return self._decision(raw, ACCEPTED, "ROOM_JOINED")
+
+    def _on_ready(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        player, error = self._authenticated_player(raw)
+        if error:
+            return self._decision(raw, REJECTED, error)
+        assert player is not None
+        room = self.rooms.get(str(raw.get("room_id", "")))
+        if room is None or player.player_id not in room.player_ids:
+            return self._decision(raw, REJECTED, "PLAYER_NOT_IN_ROOM")
+        if room.state not in ("OPEN", "READY"):
+            return self._decision(raw, REJECTED, "ROOM_NOT_READYABLE")
+        if player.ready:
+            return self._decision(raw, IGNORED, "ALREADY_READY")
+        player.ready = True
+        if room.player_ids and all(self.players[item].ready for item in room.player_ids):
+            room.state = "READY"
+        return self._decision(raw, ACCEPTED, "PLAYER_READY")
+
+    def _on_leave_room(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        player, error = self._authenticated_player(raw)
+        if error:
+            return self._decision(raw, REJECTED, error)
+        assert player is not None
+        room = self.rooms.get(str(raw.get("room_id", "")))
+        if room is None or player.player_id not in room.player_ids:
+            return self._decision(raw, REJECTED, "PLAYER_NOT_IN_ROOM")
+        if room.match_id is not None:
+            match = self.matches.get(room.match_id)
+            if match is not None and match.state == "RUNNING":
+                return self._decision(raw, REJECTED, "MATCH_RUNNING")
+        room.player_ids.remove(player.player_id)
+        player.room_id = None
+        player.ready = False
+        if room.player_ids:
+            if room.owner_player_id == player.player_id:
+                room.owner_player_id = min(room.player_ids)
+            room.state = (
+                "READY"
+                if all(self.players[item].ready for item in room.player_ids)
+                else "OPEN"
+            )
+        else:
+            self.rooms.pop(room.room_id)
+            destroyed.append(f"room:{room.room_id}")
+        return self._decision(raw, ACCEPTED, "ROOM_LEFT")
+
+    # [Implementation 5]
+    # Match start and phase transitions
+    # 참가자와 준비 상태를 확인한 뒤에만 경기를 시작합니다.
+    def _on_start_match(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        if self.server_state != "ACTIVE":
+            return self._decision(raw, REJECTED, "SERVER_DRAINING")
+        player, error = self._authenticated_player(raw)
+        if error:
+            return self._decision(raw, REJECTED, error)
+        assert player is not None
+        room = self.rooms.get(str(raw.get("room_id", "")))
+        match_id = str(raw.get("match_id", ""))
+        if room is None:
+            return self._decision(raw, REJECTED, "ROOM_NOT_FOUND")
+        if player.player_id != room.owner_player_id:
+            return self._decision(raw, REJECTED, "ROOM_OWNER_REQUIRED")
+        if room.state != "READY":
+            return self._decision(raw, REJECTED, "ROOM_NOT_READY")
+        if not match_id or match_id in self.matches:
+            return self._decision(raw, REJECTED, "MATCH_ALREADY_EXISTS")
+        match = Match(match_id=match_id, room_id=room.room_id)
+        match.participant_ids.update(room.player_ids)
+        self.matches[match_id] = match
+        room.match_id = match_id
+        room.state = "IN_MATCH"
+        created.append(f"match:{match_id}")
+        return self._decision(raw, ACCEPTED, "MATCH_STARTED")
+
+    # [Implementation 5-1]
+    # Result finalization and expired-player cleanup
+    # 경기 결과는 한 번만 확정하고, 만료된 플레이어는 경기 상태에 맞춰 정리합니다.
+    def _on_end_match(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        player, error = self._authenticated_player(raw)
+        if error:
+            return self._decision(raw, REJECTED, error)
+        assert player is not None
+        match_id = str(raw.get("match_id", ""))
+        match = self.matches.get(match_id)
+        if match is None:
+            return self._decision(raw, REJECTED, "MATCH_NOT_FOUND")
+        room = self.rooms.get(match.room_id)
+        if room is None or player.player_id != room.owner_player_id:
+            return self._decision(raw, REJECTED, "ROOM_OWNER_REQUIRED")
+        if match.state == "FINALIZED":
+            return self._decision(raw, IGNORED, "MATCH_ALREADY_FINALIZED")
+        match.state = "FINALIZED"
+        match.result_revision = 1
+        room.state = "CLOSING"
+        for player_id in sorted(match.forfeited_player_ids):
+            expired_player = self.players.get(player_id)
+            if expired_player is not None:
+                room.player_ids.discard(player_id)
+                expired_player.room_id = None
+                expired_player.ready = False
+        if not room.player_ids:
+            self.matches.pop(match.match_id, None)
+            self.rooms.pop(room.room_id, None)
+            destroyed.extend((f"match:{match.match_id}", f"room:{room.room_id}"))
+        elif room.owner_player_id not in room.player_ids:
+            room.owner_player_id = min(room.player_ids)
+        return self._decision(raw, ACCEPTED, "MATCH_FINALIZED")
+
+    def _on_close_room(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        player, error = self._authenticated_player(raw)
+        if error:
+            return self._decision(raw, REJECTED, error)
+        assert player is not None
+        room_id = str(raw.get("room_id", ""))
+        room = self.rooms.get(room_id)
+        if room is None:
+            return self._decision(raw, REJECTED, "ROOM_NOT_FOUND")
+        if player.player_id != room.owner_player_id:
+            return self._decision(raw, REJECTED, "ROOM_OWNER_REQUIRED")
+        if room.match_id is not None:
+            match = self.matches.get(room.match_id)
+            if match is not None and match.state == "RUNNING":
+                return self._decision(raw, REJECTED, "MATCH_RUNNING")
+            if match is not None:
+                self.matches.pop(match.match_id)
+                destroyed.append(f"match:{match.match_id}")
+        for player_id in sorted(room.player_ids):
+            member = self.players.get(player_id)
+            if member is not None:
+                member.room_id = None
+                member.ready = False
+        self.rooms.pop(room_id)
+        destroyed.append(f"room:{room_id}")
+        return self._decision(raw, ACCEPTED, "ROOM_CLOSED")
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
