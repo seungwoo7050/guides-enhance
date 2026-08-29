@@ -1,0 +1,15 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+---
+
+<!-- [Implementation 10]
+     Missing routes return a useful static document without requiring client-side routing. -->
+<SiteLayout title="페이지를 찾을 수 없습니다" canonicalPath="/404/">
+  <meta slot="head" name="robots" content="noindex" />
+  <section class="not-found">
+    <p class="eyebrow">404</p>
+    <h1>페이지를 찾을 수 없습니다.</h1>
+    <p>주소가 바뀌었거나 공개되지 않은 자료입니다.</p>
+    <a class="primary-link" href="/resources/">전체 자료로 이동</a>
+  </section>
+</SiteLayout>
