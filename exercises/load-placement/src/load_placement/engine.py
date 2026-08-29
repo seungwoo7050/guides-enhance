@@ -152,6 +152,125 @@ class PlacementEngine:
         ):
             raise ValueError(f"server {server.server_id} exceeds its hard limits")
 
+    # [Implementation 3]
+    # Health, drain, and protocol filtering
+    # heartbeat가 오래됐거나 drain 중이거나 protocol이 다른 서버는 후보에서 제외합니다.
+    def _healthy_servers(self, request: MatchRequest, now: int) -> tuple[list[Server], str]:
+        active = []
+        for server in self.servers.values():
+            heartbeat_age = now - server.last_heartbeat
+            if (
+                server.state == "ACTIVE"
+                and 0 <= heartbeat_age <= self.stale_after
+            ):
+                active.append(server)
+        if not active:
+            return [], "NO_HEALTHY_SERVER"
+        compatible = [
+            server
+            for server in active
+            if request.required_protocol_version in server.protocol_versions
+        ]
+        if not compatible:
+            return [], "PROTOCOL_UNSUPPORTED"
+        return compatible, "ELIGIBLE"
+
+    def _post_usage(self, server: Server, request: MatchRequest) -> dict[str, int]:
+        return {
+            "rooms": server.room_count + 1,
+            "players": server.player_count + request.expected_players,
+            "tick_cost": server.tick_cost_used + request.estimated_tick_cost,
+            "outbound_bytes": server.outbound_bytes_used + request.estimated_bandwidth,
+            "memory": server.memory_used + request.estimated_memory,
+        }
+
+    # [Implementation 3-1]
+    # Hard and soft capacity checks
+    # 배치 뒤 사용량을 먼저 계산해 hard limit과 남겨야 할 headroom을 확인합니다.
+    def _fits_hard_limits(self, server: Server, request: MatchRequest) -> bool:
+        usage = self._post_usage(server, request)
+        return (
+            usage["rooms"] <= server.limits.max_rooms
+            and usage["players"] <= server.limits.max_players
+            and usage["tick_cost"] <= server.limits.max_tick_cost
+            and usage["outbound_bytes"] <= server.limits.max_outbound_bytes
+            and usage["memory"] <= server.limits.max_memory
+        )
+
+    def _preserves_soft_headroom(self, server: Server, request: MatchRequest) -> bool:
+        usage = self._post_usage(server, request)
+        return (
+            server.limits.max_rooms - usage["rooms"] >= self.soft_headroom["rooms"]
+            and server.limits.max_players - usage["players"]
+            >= self.soft_headroom["players"]
+            and server.limits.max_tick_cost - usage["tick_cost"]
+            >= self.soft_headroom["tick_cost"]
+            and server.limits.max_outbound_bytes - usage["outbound_bytes"]
+            >= self.soft_headroom["outbound_bytes"]
+            and server.limits.max_memory - usage["memory"]
+            >= self.soft_headroom["memory"]
+        )
+
+    # [Implementation 3-2]
+    # Headroom-aware stable scoring
+    # 지역 선호와 배치 후 사용률이 같으면 server ID로 결과를 고정합니다.
+    def _score(
+        self,
+        server: Server,
+        request: MatchRequest,
+    ) -> tuple[tuple[Any, ...], dict[str, object]]:
+        usage = self._post_usage(server, request)
+        limits = {
+            "rooms": server.limits.max_rooms,
+            "players": server.limits.max_players,
+            "tick_cost": server.limits.max_tick_cost,
+            "outbound_bytes": server.limits.max_outbound_bytes,
+            "memory": server.limits.max_memory,
+        }
+        utilizations = {
+            key: 0.0 if limits[key] == 0 else usage[key] / limits[key] for key in usage
+        }
+        try:
+            region_rank = request.region_preferences.index(server.region)
+        except ValueError:
+            region_rank = len(request.region_preferences) + 1
+        max_utilization = max(utilizations.values())
+        average_utilization = sum(utilizations.values()) / len(utilizations)
+        score_key = (
+            region_rank,
+            round(max_utilization, 12),
+            round(average_utilization, 12),
+            server.server_id,
+        )
+        score = {
+            "region_rank": region_rank,
+            "max_post_utilization": round(max_utilization, 6),
+            "average_post_utilization": round(average_utilization, 6),
+            "post_usage": usage,
+        }
+        return score_key, score
+
+    # [Implementation 4]
+    # Candidate server selection
+    # 모든 필터를 통과한 서버만 점수로 비교합니다.
+    def _select_server(
+        self, request: MatchRequest, now: int
+    ) -> tuple[Server | None, str, dict[str, object] | None]:
+        eligible, reason = self._healthy_servers(request, now)
+        if not eligible:
+            return None, reason, None
+        hard = [server for server in eligible if self._fits_hard_limits(server, request)]
+        if not hard:
+            return None, "HARD_CAPACITY_EXCEEDED", None
+        soft = [server for server in hard if self._preserves_soft_headroom(server, request)]
+        if not soft:
+            return None, "SOFT_HEADROOM_REQUIRED", None
+        ranked = [(self._score(server, request), server) for server in soft]
+        ranked.sort(key=lambda item: item[0][0])
+        (score_key, score), server = ranked[0]
+        score["score_key"] = list(score_key[:-1])
+        return server, "PLACEMENT_AVAILABLE", score
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
