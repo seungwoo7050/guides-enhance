@@ -79,6 +79,7 @@ run_tests() {
     bash -n "$ROOT/tests/test_git_lab.sh"
 
     TMP=$(mktemp -d "${TMPDIR:-/tmp}/local-git-lab-test.XXXXXX")
+    TMP=$(cd -- "$TMP" && pwd -P)
     sandbox="$TMP/project"
     mkdir -p "$sandbox"
     cp "$ROOT/git-lab.sh" "$sandbox/git-lab.sh"
