@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/fault-server" },
+    { "path": "packages/sync-engine" },
+    { "path": "packages/lifecycle-engine" },
+    { "path": "packages/release-contract" }
+  ]
+}
