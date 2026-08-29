@@ -250,6 +250,89 @@ class TrustEngine:
             ):
                 raise ValueError("entity ownership is inconsistent")
 
+    # [Implementation 3]
+    # Payload size and finite-number checks
+    # NaN과 infinity를 JSON digest에 그대로 넣지 않고 안전한 표기로 바꿉니다.
+    def _contains_non_finite(self, value: Any) -> bool:
+        if isinstance(value, float):
+            return not math.isfinite(value)
+        if isinstance(value, dict):
+            return any(self._contains_non_finite(item) for item in value.values())
+        if isinstance(value, list):
+            return any(self._contains_non_finite(item) for item in value)
+        return False
+
+    def _safe_value(self, value: Any) -> Any:
+        if isinstance(value, float) and not math.isfinite(value):
+            if math.isnan(value):
+                return {"non_finite": "NaN"}
+            return {"non_finite": "Infinity" if value > 0 else "-Infinity"}
+        if isinstance(value, dict):
+            return {str(key): self._safe_value(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._safe_value(item) for item in value]
+        return value
+
+    # [Implementation 4]
+    # Command envelope normalization
+    # 필수 식별자와 수치 형식을 확인하고 audit에 남길 payload 요약을 만듭니다.
+    def _normalize_command(self, raw: Any) -> tuple[dict[str, Any] | None, str | None]:
+        if not isinstance(raw, dict):
+            return None, "INVALID_COMMAND"
+        required = (
+            "command_id",
+            "actor_id",
+            "session_id",
+            "connection_id",
+            "session_epoch",
+            "player_id",
+            "room_id",
+            "match_id",
+            "sequence",
+            "kind",
+            "payload",
+        )
+        if any(key not in raw for key in required):
+            return None, "INVALID_COMMAND"
+        numeric = (raw["session_epoch"], raw["sequence"])
+        if any(not self._is_int(value) or value < 0 for value in numeric):
+            return None, "INVALID_NUMERIC_VALUE"
+
+        payload = raw["payload"]
+        payload_error: str | None = None
+        if not isinstance(payload, dict):
+            payload = {}
+            payload_error = "INVALID_PAYLOAD"
+        safe_payload = self._safe_value(payload)
+        payload_size = canonical_size(safe_payload)
+        if payload_error is None and self._contains_non_finite(payload):
+            payload_error = "INVALID_NUMERIC_VALUE"
+        if payload_error is None and payload_size > self.max_payload_bytes:
+            payload_error = "PAYLOAD_TOO_LARGE"
+
+        command = {
+            "command_id": str(raw["command_id"]),
+            "actor_id": str(raw["actor_id"]),
+            "session_id": str(raw["session_id"]),
+            "connection_id": str(raw["connection_id"]),
+            "session_epoch": raw["session_epoch"],
+            "player_id": str(raw["player_id"]),
+            "room_id": str(raw["room_id"]),
+            "match_id": str(raw["match_id"]),
+            "sequence": raw["sequence"],
+            "kind": str(raw["kind"]),
+            "payload": copy.deepcopy(payload),
+            "safe_payload": safe_payload,
+            "payload_size": payload_size,
+        }
+        if any(
+            not command[key]
+            for key in required
+            if key not in ("payload", "session_epoch", "sequence")
+        ):
+            return None, "INVALID_COMMAND"
+        return command, payload_error
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
