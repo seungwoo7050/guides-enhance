@@ -271,6 +271,110 @@ class PlacementEngine:
         score["score_key"] = list(score_key[:-1])
         return server, "PLACEMENT_AVAILABLE", score
 
+    # [Implementation 5]
+    # Immediate reservation and duplicate request handling
+    # 결정을 반환하기 전에 사용량을 반영해 같은 capacity를 두 요청이 함께 쓰지 못하게 합니다.
+    def _reserve(
+        self,
+        request: MatchRequest,
+        server: Server,
+        score: dict[str, object],
+    ) -> RequestDecision:
+        server.room_count += 1
+        server.player_count += request.expected_players
+        server.tick_cost_used += request.estimated_tick_cost
+        server.outbound_bytes_used += request.estimated_bandwidth
+        server.memory_used += request.estimated_memory
+        self._assert_server_within_hard_limits(server)
+        self.reservations[request.request_id] = Reservation(
+            request_id=request.request_id,
+            server_id=server.server_id,
+            players=request.expected_players,
+            tick_cost=request.estimated_tick_cost,
+            outbound_bytes=request.estimated_bandwidth,
+            memory=request.estimated_memory,
+        )
+        decision = RequestDecision(
+            request_id=request.request_id,
+            status="PLACED",
+            reason_code="PLACED",
+            server_id=server.server_id,
+            score=score,
+        )
+        self.decisions[request.request_id] = decision
+        return decision
+
+    def _admit(self, request: MatchRequest, now: int, allow_queue: bool) -> RequestDecision:
+        existing = self.decisions.get(request.request_id)
+        if existing is not None:
+            return RequestDecision(
+                request_id=request.request_id,
+                status=existing.status,
+                reason_code="DUPLICATE_REQUEST",
+                server_id=existing.server_id,
+                score=existing.score,
+            )
+        if now > request.deadline:
+            decision = RequestDecision(request.request_id, "REJECTED", "DEADLINE_EXPIRED")
+            self.decisions[request.request_id] = decision
+            return decision
+        server, reason, score = self._select_server(request, now)
+        if server is not None and score is not None:
+            return self._reserve(request, server, score)
+        if allow_queue and now < request.deadline:
+            return self._enqueue_request(request, reason)
+        decision = RequestDecision(request.request_id, "REJECTED", reason)
+        self.decisions[request.request_id] = decision
+        return decision
+
+    # [Implementation 6]
+    # Bounded placement queue
+    # 배치할 수 없는 요청은 정해진 개수까지만 보류합니다.
+    def _enqueue_request(self, request: MatchRequest, placement_reason: str) -> RequestDecision:
+        if len(self.queue) >= self.max_queue_size:
+            decision = RequestDecision(request.request_id, "REJECTED", "QUEUE_FULL")
+            self.decisions[request.request_id] = decision
+            return decision
+        self.queue.append(request.request_id)
+        self.queue.sort(key=lambda item: (self.requests[item].created_at, item))
+        decision = RequestDecision(
+            request.request_id,
+            "QUEUED",
+            f"QUEUED_{placement_reason}",
+        )
+        self.decisions[request.request_id] = decision
+        return decision
+
+    # [Implementation 6-1]
+    # Queue deadline expiry and retry
+    # 요청 생성 시각과 deadline 순서를 유지하면서 다시 배치합니다.
+    def _process_queue(self, now: int) -> list[dict[str, object]]:
+        updates: list[dict[str, object]] = []
+        remaining: list[str] = []
+        for request_id in sorted(
+            self.queue,
+            key=lambda item: (self.requests[item].created_at, item),
+        ):
+            request = self.requests[request_id]
+            if now > request.deadline:
+                decision = RequestDecision(request_id, "REJECTED", "DEADLINE_EXPIRED")
+                self.decisions[request_id] = decision
+                updates.append(asdict(decision))
+                continue
+            server, reason, score = self._select_server(request, now)
+            if server is None or score is None:
+                remaining.append(request_id)
+                self.decisions[request_id] = RequestDecision(
+                    request_id,
+                    "QUEUED",
+                    f"QUEUED_{reason}",
+                )
+                continue
+            decision = self._reserve(request, server, score)
+            updates.append(asdict(decision))
+        self.queue = remaining
+        return updates
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""

@@ -10,11 +10,10 @@ class ImplementationBoundaryTest(unittest.TestCase):
 
     def test_current_engine_stage_has_no_future_markers(self) -> None:
         source = (Path(__file__).parents[1] / "src/load_placement/engine.py").read_text()
-        self.assertIn('[Implementation 3]', source)
-        self.assertIn('[Implementation 3-1]', source)
-        self.assertIn('[Implementation 3-2]', source)
-        self.assertIn('[Implementation 4]', source)
-        self.assertNotIn('[Implementation 5]', source)
+        self.assertIn('[Implementation 5]', source)
+        self.assertIn('[Implementation 6]', source)
+        self.assertIn('[Implementation 6-1]', source)
+        self.assertNotIn('[Implementation 7]', source)
 
 
 if __name__ == "__main__":
