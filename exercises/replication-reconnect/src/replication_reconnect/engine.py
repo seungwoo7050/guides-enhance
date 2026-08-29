@@ -310,6 +310,80 @@ class ReplicationEngine:
         client.resync_requested = False
         return "APPLIED", "DELTA_APPLIED"
 
+    # [Implementation 3]
+    # Contiguous buffered-delta replay
+    # 현재 version에서 바로 이어지는 delta만 순서대로 꺼내 적용합니다.
+    def _drain_pending(self, client: ClientReplica) -> list[str]:
+        applied: list[str] = []
+        while client.state_version in client.pending:
+            message = client.pending.pop(client.state_version)
+            status, _ = self._apply_delta(client, message)
+            if status != "APPLIED":
+                break
+            applied.append(message.message_id)
+        return applied
+
+    # [Implementation 4]
+    # Version and baseline validation
+    # 현재 replica가 요구한 baseline과 일치하지 않으면 상태를 바꾸지 않습니다.
+    def deliver(self, client: ClientReplica, message: Message) -> tuple[str, str, list[str]]:
+        identity_reason = self._identity_reason(message)
+        if identity_reason is not None:
+            self._record_discard(client, message, identity_reason)
+            return "REJECTED", identity_reason, []
+        if not client.connected:
+            self._record_discard(client, message, "CLIENT_DISCONNECTED")
+            return "REJECTED", "CLIENT_DISCONNECTED", []
+        if message.version > self.server_version:
+            self._record_discard(client, message, "SERVER_VERSION_EXCEEDED")
+            self._request_resync(client, "SERVER_VERSION_EXCEEDED")
+            return "REJECTED", "SERVER_VERSION_EXCEEDED", []
+
+        if message.kind == "SNAPSHOT":
+            return self._apply_snapshot(client, message)
+
+        assert message.baseline_version is not None
+        if message.version <= client.state_version:
+            self._record_discard(client, message, "DUPLICATE_OR_STALE_DELTA")
+            return "IGNORED", "DUPLICATE_OR_STALE_DELTA", []
+        if message.baseline_version == client.state_version:
+            status, reason = self._apply_delta(client, message)
+            return status, reason, self._drain_pending(client) if status == "APPLIED" else []
+        if message.baseline_version < client.state_version:
+            self._record_discard(client, message, "BASELINE_MISMATCH")
+            self._request_resync(client, "BASELINE_MISMATCH")
+            return "REJECTED", "BASELINE_MISMATCH", []
+
+        # [Implementation 4-1]
+        # Bounded future-delta buffering
+        # gap과 보류 개수를 모두 제한해 손실된 delta를 무기한 기다리지 않습니다.
+        gap = message.baseline_version - client.state_version
+        if gap > self.config.max_gap:
+            self._record_discard(client, message, "GAP_LIMIT_EXCEEDED")
+            client.pending.clear()
+            self._request_resync(client, "GAP_LIMIT_EXCEEDED")
+            return "RESYNC_REQUIRED", "GAP_LIMIT_EXCEEDED", []
+        existing = client.pending.get(message.baseline_version)
+        if existing is not None:
+            reason = (
+                "DUPLICATE_PENDING_DELTA"
+                if existing.message_id == message.message_id
+                else "CONFLICTING_PENDING_DELTA"
+            )
+            self._record_discard(client, message, reason)
+            if reason == "CONFLICTING_PENDING_DELTA":
+                client.pending.clear()
+                self._request_resync(client, reason)
+                return "RESYNC_REQUIRED", reason, []
+            return "IGNORED", reason, []
+        if len(client.pending) >= self.config.max_pending_deltas:
+            self._record_discard(client, message, "PENDING_QUEUE_LIMIT")
+            client.pending.clear()
+            self._request_resync(client, "PENDING_QUEUE_LIMIT")
+            return "RESYNC_REQUIRED", "PENDING_QUEUE_LIMIT", []
+        client.pending[message.baseline_version] = message
+        return "BUFFERED", "FUTURE_DELTA_BUFFERED", []
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
