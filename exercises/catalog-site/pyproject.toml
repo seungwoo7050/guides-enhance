@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "django-catalog-site"
+version = "1.0.0"
+description = "A server-rendered catalog, review, and moderation site"
+requires-python = ">=3.12"
+dependencies = [
+    "Django==5.2.17",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["accounts*", "catalog*", "config*"]
+
+[tool.setuptools.package-data]
+accounts = [
+    "templates/accounts/*.html",
+    "templates/registration/*.html",
+]
+catalog = [
+    "templates/*.html",
+    "templates/catalog/*.html",
+    "static/catalog/*.css",
+    "fixtures/catalog/*.json",
+]
