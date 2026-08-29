@@ -1,0 +1,13 @@
+.DS_Store
+.idea/
+.vscode/
+node_modules/
+dist/
+.astro/
+coverage/
+playwright-report/
+test-results/
+*.log
+.env
+.env.*
+!.env.example
