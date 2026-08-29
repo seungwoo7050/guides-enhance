@@ -275,4 +275,149 @@ export class InMemorySyncRepository implements SyncRepository {
     }
     return resumed;
   }
+
+  // [Implementation 6-3]
+  // 새 명령으로 충돌을 해결하고 아직 보내지 않은 명령만 새 기준 버전으로 바꿉니다.
+  async resolveConflict(
+    conflictId: string,
+    resolution: ConflictResolution,
+  ): Promise<ConflictResolutionResult> {
+    const conflict = this.#conflicts.find((candidate) => candidate.conflictId === conflictId);
+    if (!conflict) throw new Error(`unknown conflict: ${conflictId}`);
+    if (conflict.resolution) throw new Error(`conflict already resolved: ${conflictId}`);
+    const original = this.#commands.find((entry) => entry.command.commandId === conflict.commandId);
+    if (!original || original.state.kind !== "conflict") throw new Error("conflict command is unavailable");
+    const record = this.#record(conflict.recordId);
+
+    const later = this.#pendingCommandsAfter(original);
+
+    if (resolution.kind === "remote") {
+      this.#supersede(later, null, resolution.resolvedAt);
+      conflict.resolution = { kind: "remote", resolvedAt: resolution.resolvedAt };
+      original.state = {
+        kind: "completed",
+        attempted: clone(original.state.attempted),
+        attempt: original.state.attempt,
+        remoteVersion: conflict.remote?.version ?? null,
+        completedAt: resolution.resolvedAt,
+      };
+      record.payload = clone(conflict.remote?.payload ?? null);
+      record.deleted = conflict.remote?.deleted ?? true;
+      record.knownRemoteVersion = conflict.remote?.version ?? null;
+      record.syncState = "synced";
+      return { conflict: clone(conflict), command: null };
+    }
+
+    const payload = resolution.kind === "merge" ? clone(resolution.payload) : clone(record.payload);
+    if (resolution.kind === "merge") {
+      record.payload = clone(payload);
+      record.deleted = false;
+      record.localRevision += 1;
+    }
+    const operation = record.deleted ? "delete" : "upsert";
+    if (operation === "upsert" && payload === null) throw new Error("local resolution has no payload");
+    if (this.#commands.some((entry) => entry.command.commandId === resolution.commandId)) {
+      throw new Error(`duplicate resolution command: ${resolution.commandId}`);
+    }
+
+    const command: DurableCommand = {
+      command: {
+        commandId: resolution.commandId,
+        recordId: record.recordId,
+        operation,
+        baseVersion: conflict.remote?.version ?? null,
+        localRevision: record.localRevision,
+        payload: operation === "delete" ? null : clone(payload),
+        createdAt: resolution.createdAt,
+      },
+      state: { kind: "pending" },
+      sequence: ++this.#sequence,
+    };
+    this.#supersede(later, resolution.commandId, resolution.resolvedAt);
+    this.#commands.push(command);
+    original.state = {
+      kind: "completed",
+      attempted: clone(original.state.attempted),
+      attempt: original.state.attempt,
+      remoteVersion: conflict.remote?.version ?? null,
+      completedAt: resolution.resolvedAt,
+    };
+    conflict.resolution = {
+      kind: resolution.kind,
+      resolvedAt: resolution.resolvedAt,
+      resolutionCommandId: resolution.commandId,
+    };
+    record.knownRemoteVersion = conflict.remote?.version ?? null;
+    record.syncState = "pending";
+    return { conflict: clone(conflict), command: clone(command) };
+  }
+
+  async snapshot(): Promise<RepositorySnapshot> {
+    return {
+      records: clone(this.#records).sort((a, b) => a.recordId.localeCompare(b.recordId)),
+      commands: clone(this.#commands).sort((a, b) => a.sequence - b.sequence),
+      conflicts: clone(this.#conflicts),
+      checkpoints: clone(this.#checkpoints),
+    };
+  }
+
+  failNextCheckpoint(reason = "injected checkpoint failure"): void {
+    this.#failNextCheckpointReason = reason;
+  }
+
+  #eligible(entry: DurableCommand, now: number): boolean {
+    if (entry.state.kind === "pending") return true;
+    if (entry.state.kind === "retry_wait") return entry.state.nextAttemptAt <= now;
+    if (entry.state.kind === "in_flight") return entry.state.lease.expiresAt <= now;
+    return false;
+  }
+
+  #record(recordId: string): LocalRecord {
+    const record = this.#records.find((candidate) => candidate.recordId === recordId);
+    if (!record) throw new Error(`missing local record: ${recordId}`);
+    return record;
+  }
+
+  #pendingCommandsAfter(original: DurableCommand): DurableCommand[] {
+    const later = this.#commands.filter((entry) =>
+      entry.command.recordId === original.command.recordId
+      && entry.sequence > original.sequence
+      && !terminal(entry.state),
+    );
+    const invalid = later.find((entry) => entry.state.kind !== "pending");
+    if (invalid) {
+      throw new Error(
+        `conflict resolution found an attempted later command: ${invalid.command.commandId}`,
+      );
+    }
+    return later;
+  }
+
+  #supersede(
+    commands: DurableCommand[],
+    supersededBy: string | null,
+    completedAt: number,
+  ): void {
+    for (const entry of commands) {
+      entry.state = { kind: "superseded", supersededBy, completedAt };
+    }
+  }
+
+  #rebasePending(
+    completed: DurableCommand,
+    baseVersion: number,
+  ): CheckpointResult["rebased"] {
+    const result: CheckpointResult["rebased"] = [];
+    for (const entry of this.#commands) {
+      if (entry.sequence <= completed.sequence
+        || entry.command.recordId !== completed.command.recordId
+        || entry.state.kind !== "pending") continue;
+      const previousCommandId = entry.command.commandId;
+      // 아직 보내지 않은 명령만 새 기준 버전과 새 ID로 바꿉니다. 이미 시도한 명령은 수정하지 않습니다.
+      const commandId = `${previousCommandId}-rebase-${++this.#generatedCommandSequence}`;
+      entry.command = { ...clone(entry.command), commandId, baseVersion };
+      result.push({ previousCommandId, commandId, baseVersion });
+    }
+    return result;
+  }
 }
