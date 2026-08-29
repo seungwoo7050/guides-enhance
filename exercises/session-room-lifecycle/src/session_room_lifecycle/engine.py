@@ -118,6 +118,207 @@ class LifecycleEngine:
             return None, "PLAYER_NOT_FOUND"
         return player, None
 
+    # [Implementation 3]
+    # Connection creation and session ownership
+    # 연결 식별자를 플레이어 식별자로 사용하지 않고 별도 자원으로 관리합니다.
+    def _on_connect(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        connection_id = str(raw.get("connection_id", ""))
+        if not connection_id:
+            return self._decision(raw, REJECTED, "INVALID_CONNECTION_ID")
+        if connection_id in self.connections:
+            return self._decision(raw, REJECTED, "CONNECTION_ALREADY_EXISTS")
+        self.connections[connection_id] = Connection(connection_id)
+        created.append(f"connection:{connection_id}")
+        return self._decision(raw, ACCEPTED, "CONNECTED")
+
+    # [Implementation 3-1]
+    # Authentication binding
+    # 하나의 활성 세션은 한 연결과 한 플레이어만 가리키게 합니다.
+    def _on_authenticate(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        connection_id = str(raw.get("connection_id", ""))
+        session_id = str(raw.get("session_id", ""))
+        player_id = str(raw.get("player_id", ""))
+        epoch = raw.get("session_epoch")
+        connection = self.connections.get(connection_id)
+        if connection is None:
+            return self._decision(raw, REJECTED, "CONNECTION_NOT_FOUND")
+        if connection.state != "OPEN_UNAUTHENTICATED":
+            return self._decision(raw, REJECTED, "CONNECTION_NOT_AUTHENTICATABLE")
+        if (
+            not session_id
+            or not player_id
+            or not isinstance(epoch, int)
+            or isinstance(epoch, bool)
+            or epoch < 1
+        ):
+            return self._decision(raw, REJECTED, "INVALID_AUTHENTICATION")
+        existing = self.sessions.get(session_id)
+        if existing is not None:
+            if existing.player_id != player_id:
+                return self._decision(raw, REJECTED, "SESSION_PLAYER_MISMATCH")
+            if existing.state == "WAITING_RECONNECT":
+                return self._decision(raw, REJECTED, "RECONNECT_REQUIRED")
+            return self._decision(raw, REJECTED, "SESSION_ALREADY_EXISTS")
+        if player_id in self.players:
+            return self._decision(raw, REJECTED, "PLAYER_ALREADY_EXISTS")
+
+        self.sessions[session_id] = Session(
+            session_id=session_id,
+            player_id=player_id,
+            epoch=epoch,
+            state="ACTIVE",
+            connection_id=connection_id,
+        )
+        self.players[player_id] = Player(player_id=player_id, session_id=session_id)
+        connection.state = "AUTHENTICATED"
+        connection.session_id = session_id
+        created.extend((f"session:{session_id}", f"player:{player_id}"))
+        return self._decision(raw, ACCEPTED, "AUTHENTICATED")
+
+    # [Implementation 3-2]
+    # Disconnect grace and expiry
+    # 연결이 끊겨도 grace가 끝나기 전에는 플레이어와 경기 참가 기록을 유지합니다.
+    def _on_disconnect(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        connection_id = str(raw.get("connection_id", ""))
+        connection = self.connections.get(connection_id)
+        if connection is None:
+            return self._decision(raw, REJECTED, "CONNECTION_NOT_FOUND")
+        if connection.state == "DISCONNECTED":
+            return self._decision(raw, IGNORED, "ALREADY_DISCONNECTED")
+        connection.state = "DISCONNECTED"
+        if connection.session_id is not None:
+            session = self.sessions.get(connection.session_id)
+            if session is not None and session.connection_id == connection_id:
+                session.state = "WAITING_RECONNECT"
+                session.connection_id = None
+                session.grace_deadline = self.logical_time + self.reconnect_grace
+        return self._decision(raw, ACCEPTED, "DISCONNECTED")
+
+    def _expire_waiting_sessions(self, destroyed: list[str]) -> list[str]:
+        expired: list[str] = []
+        for session_id in sorted(self.sessions):
+            session = self.sessions[session_id]
+            if (
+                session.state == "WAITING_RECONNECT"
+                and session.grace_deadline is not None
+                and self.logical_time > session.grace_deadline
+            ):
+                session.state = "EXPIRED"
+                session.grace_deadline = None
+                expired.append(session_id)
+                player = self.players.get(session.player_id)
+                if player is not None:
+                    self._forfeit_or_detach(player, destroyed)
+        return expired
+
+    def _forfeit_or_detach(self, player: Player, destroyed: list[str]) -> None:
+        if player.room_id is None:
+            return
+        room = self.rooms.get(player.room_id)
+        if room is None:
+            player.room_id = None
+            return
+        if room.match_id is not None:
+            match = self.matches.get(room.match_id)
+            if match is not None and match.state == "RUNNING":
+                match.forfeited_player_ids.add(player.player_id)
+                player.forfeited = True
+                if room.owner_player_id == player.player_id:
+                    successors = sorted(
+                        participant_id
+                        for participant_id in room.player_ids
+                        if participant_id not in match.forfeited_player_ids
+                    )
+                    if successors:
+                        room.owner_player_id = successors[0]
+                    else:
+                        self._dispose_abandoned_match(room, match, destroyed)
+                return
+        room.player_ids.discard(player.player_id)
+        player.room_id = None
+        player.ready = False
+        if room.player_ids:
+            if room.owner_player_id == player.player_id:
+                room.owner_player_id = min(room.player_ids)
+            room.state = (
+                "READY"
+                if all(self.players[item].ready for item in room.player_ids)
+                else "OPEN"
+            )
+        else:
+            self.rooms.pop(room.room_id, None)
+            destroyed.append(f"room:{room.room_id}")
+
+    def _dispose_abandoned_match(
+        self,
+        room: Room,
+        match: Match,
+        destroyed: list[str],
+    ) -> None:
+        match.state = "FINALIZED"
+        match.result_revision = 1
+        for player_id in sorted(room.player_ids):
+            participant = self.players.get(player_id)
+            if participant is not None:
+                participant.room_id = None
+                participant.ready = False
+        self.matches.pop(match.match_id, None)
+        self.rooms.pop(room.room_id, None)
+        destroyed.extend((f"match:{match.match_id}", f"room:{room.room_id}"))
+
+    # [Implementation 3-3]
+    # Epoch-checked reconnect
+    # 이전 연결의 늦은 요청이 현재 세션을 다시 차지하지 못하게 epoch를 증가시킵니다.
+    def _on_reconnect(
+        self,
+        raw: dict[str, Any],
+        created: list[str],
+        destroyed: list[str],
+    ) -> EventDecision:
+        connection_id = str(raw.get("connection_id", ""))
+        session_id = str(raw.get("session_id", ""))
+        player_id = str(raw.get("player_id", ""))
+        epoch = raw.get("session_epoch")
+        connection = self.connections.get(connection_id)
+        session = self.sessions.get(session_id)
+        if connection is None:
+            return self._decision(raw, REJECTED, "CONNECTION_NOT_FOUND")
+        if connection.state != "OPEN_UNAUTHENTICATED":
+            return self._decision(raw, REJECTED, "CONNECTION_NOT_RECONNECTABLE")
+        if session is None or session.player_id != player_id:
+            return self._decision(raw, REJECTED, "SESSION_NOT_FOUND")
+        if session.state == "EXPIRED":
+            return self._decision(raw, REJECTED, "RECONNECT_GRACE_EXPIRED")
+        if session.state != "WAITING_RECONNECT":
+            return self._decision(raw, REJECTED, "SESSION_NOT_WAITING")
+        if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch != session.epoch + 1:
+            return self._decision(raw, REJECTED, "SESSION_EPOCH_MISMATCH")
+        if session.grace_deadline is None or self.logical_time > session.grace_deadline:
+            return self._decision(raw, REJECTED, "RECONNECT_GRACE_EXPIRED")
+
+        session.epoch = epoch
+        session.state = "ACTIVE"
+        session.connection_id = connection_id
+        session.grace_deadline = None
+        connection.state = "AUTHENTICATED"
+        connection.session_id = session_id
+        return self._decision(raw, ACCEPTED, "RECONNECTED")
+
 
 def run_scenario(scenario):
     """Expose the package boundary while later lifecycle stages are unfinished."""
