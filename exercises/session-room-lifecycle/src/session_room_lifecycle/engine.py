@@ -4,6 +4,7 @@ from dataclasses import asdict
 from typing import Any
 
 from .model import Connection, EventDecision, Match, Player, Room, Session
+from .serialization import digest_result
 
 
 ACCEPTED = "ACCEPTED"
@@ -634,6 +635,26 @@ class LifecycleEngine:
         }
 
 
-def run_scenario(scenario):
-    """Expose the package boundary while later lifecycle stages are unfinished."""
-    raise NotImplementedError("scenario execution is introduced in a later implementation stage")
+def run_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(scenario, dict):
+        raise ValueError("scenario must be an object")
+    config = scenario.get("config", {})
+    if not isinstance(config, dict):
+        raise ValueError("config must be an object")
+    reconnect_grace = config.get("reconnect_grace", 0)
+    if not isinstance(reconnect_grace, int) or isinstance(reconnect_grace, bool):
+        raise ValueError("reconnect_grace must be an integer")
+    engine = LifecycleEngine(reconnect_grace)
+    events = scenario.get("events", [])
+    if not isinstance(events, list):
+        raise ValueError("events must be an array")
+    for event in events:
+        if not isinstance(event, dict):
+            raise ValueError("each event must be an object")
+        engine.apply_event(event)
+    result: dict[str, Any] = {
+        "trace": engine.trace,
+        "final_state": engine.snapshot(),
+    }
+    result["digest"] = digest_result(result)
+    return result

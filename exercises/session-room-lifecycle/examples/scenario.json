@@ -1,0 +1,17 @@
+{
+  "config": {"reconnect_grace": 5},
+  "events": [
+    {"event_id": "e01", "kind": "CONNECT", "logical_time": 0, "connection_id": "c1"},
+    {"event_id": "e02", "kind": "AUTHENTICATE", "logical_time": 0, "connection_id": "c1", "session_id": "s1", "player_id": "alice", "session_epoch": 1},
+    {"event_id": "e03", "kind": "CREATE_ROOM", "logical_time": 1, "connection_id": "c1", "room_id": "room-1"},
+    {"event_id": "e04", "kind": "READY", "logical_time": 2, "connection_id": "c1", "room_id": "room-1"},
+    {"event_id": "e05", "kind": "START_MATCH", "logical_time": 3, "connection_id": "c1", "room_id": "room-1", "match_id": "match-1"},
+    {"event_id": "e06", "kind": "DISCONNECT", "logical_time": 4, "connection_id": "c1"},
+    {"event_id": "e07", "kind": "CONNECT", "logical_time": 6, "connection_id": "c2"},
+    {"event_id": "e08", "kind": "RECONNECT", "logical_time": 6, "connection_id": "c2", "session_id": "s1", "player_id": "alice", "session_epoch": 2},
+    {"event_id": "e09", "kind": "BEGIN_DRAIN", "logical_time": 7},
+    {"event_id": "e10", "kind": "END_MATCH", "logical_time": 8, "connection_id": "c2", "match_id": "match-1"},
+    {"event_id": "e11", "kind": "CLOSE_ROOM", "logical_time": 9, "connection_id": "c2", "room_id": "room-1"},
+    {"event_id": "e12", "kind": "SHUTDOWN", "logical_time": 10}
+  ]
+}
