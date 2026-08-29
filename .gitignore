@@ -1,0 +1,14 @@
+.DS_Store
+*.pyc
+*.tsbuildinfo
+
+node_modules/
+coverage/
+dist/
+.expo/
+android/
+ios/
+
+.env
+.env.*
+!.env.example
